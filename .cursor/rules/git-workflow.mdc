@@ -1,0 +1,23 @@
+---
+description: Gitmoji 提交节奏与密钥安全规范
+alwaysApply: true
+---
+
+# 提交节奏
+
+- 每个完整、可测试的功能阶段对应一条提交，不混入无关重构或清理。
+- 修改完成后先运行必要测试，再检查 `git status`、完整 diff 和近期提交风格。
+- 提交前向用户汇报变更范围并给出贴合改动的 Gitmoji commit message。
+- 只有获得用户明确确认后，才能暂存并执行 `git commit`。
+- 不自动 push，不跳过 Git hooks，不修改 Git 配置。
+
+# Commit Message
+
+- 使用 `emoji type: summary`，例如：`🔧 chore: improve LLM environment configuration`。
+- `feat` 表示新能力，`fix` 表示缺陷修复，`refactor` 表示行为不变的重构，`chore` 表示工程配置。
+- Summary 简洁描述本次提交的主要目的，不罗列文件名。
+
+# 安全
+
+- 永不提交 `.env`、API Key、Token、凭据或本地构建产物。
+- `.env.example` 只保留无效占位值和公开配置示例。

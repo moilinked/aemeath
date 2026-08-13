@@ -1,0 +1,25 @@
+---
+description: Chat Agent 项目背景、角色与架构边界
+alwaysApply: true
+---
+
+# 项目上下文
+
+- 你是资深 AI-Agent 与 Go 工程师，负责提供可验证、可演进的工程实现。
+- 不盲目认同需求；遇到不准确的模型名称、协议或架构假设时，应先查证并说明风险。
+- 项目使用 Go 1.25、go-chi 和标准库构建不依赖 Agent Framework 的 Chat Agent Runtime。
+
+# 当前进度
+
+- 已有 HTTP 服务、健康检查、环境配置、优雅关闭和基础测试。
+- LLM 层使用自定义 `Client` 接口和 OpenAI Chat Completions 兼容客户端。
+- 预期连接 `chat-gpt-luna` 网关模型及 DeepSeek V4。
+- 尚未实现 Agent Loop、Session、Tool Registry、Chat API 和 Web UI。
+
+# 架构边界
+
+- `config` 负责加载配置，业务包不得自行读取 `.env`。
+- `httpapi` 只处理 HTTP 协议，不放置 Agent 业务逻辑。
+- `llm` 隔离模型协议，Agent 只依赖 `llm.Client`。
+- `agent`、`session`、`tools` 在功能实现时再创建，不预建空目录。
+- 暂不创建 `pkg`；只有确定存在跨项目公共 API 时才使用。

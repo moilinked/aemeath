@@ -8,11 +8,21 @@
 - 环境变量配置
 - go-chi 路由与通用中间件
 - `GET /healthz` 健康检查
+- OpenAI Chat Completions 兼容 LLM Client
+- OpenAI 网关与 DeepSeek V4 配置切换
 - 基础单元测试
 
-暂未实现 Chat API、LLM、Session、Tool Registry 和 Agent Loop。
+暂未实现 Chat API、Session、Tool Registry 和 Agent Loop。
 
 ## 启动
+
+首次运行时创建本地配置：
+
+```powershell
+Copy-Item .env.example .env
+```
+
+在 `.env` 中填写当前供应商对应的 API Key。系统环境变量优先级高于 `.env`。
 
 ```bash
 go run ./cmd/server
@@ -49,3 +59,11 @@ Invoke-RestMethod http://localhost:8080/healthz
 | `SERVER_WRITE_TIMEOUT` | `30s` |
 | `SERVER_IDLE_TIMEOUT` | `60s` |
 | `SERVER_SHUTDOWN_TIMEOUT` | `10s` |
+| `LLM_PROVIDER` | `deepseek` |
+| `LLM_REQUEST_TIMEOUT` | `60s` |
+| `OPENAI_API_KEY` | 无 |
+| `OPENAI_BASE_URL` | `https://api.openai.com/v1` |
+| `OPENAI_MODEL` | 无 |
+| `DEEPSEEK_API_KEY` | 无 |
+| `DEEPSEEK_BASE_URL` | `https://api.deepseek.com` |
+| `DEEPSEEK_MODEL` | `deepseek-v4-pro` |

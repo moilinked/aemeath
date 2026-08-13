@@ -1,10 +1,7 @@
 // Package llm 定义与具体模型厂商无关的对话接口和数据结构。
 package llm
 
-import (
-	"context"
-	"encoding/json"
-)
+import "encoding/json"
 
 const (
 	// OpenAIBaseURL 是 OpenAI Chat Completions API 的默认基础地址。
@@ -17,12 +14,6 @@ const (
 	// DeepSeekV4Pro 指向 DeepSeek V4 Pro 的滚动版本。
 	DeepSeekV4Pro = "deepseek-v4-pro"
 )
-
-// Client 是 Agent Runtime 依赖的最小 LLM 能力。
-// 上层只依赖此接口，不感知 OpenAI、DeepSeek 或其他兼容服务。
-type Client interface {
-	Chat(ctx context.Context, request ChatRequest) (*ChatResponse, error)
-}
 
 // Role 表示消息发送方。
 type Role string
