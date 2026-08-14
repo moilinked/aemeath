@@ -1,10 +1,13 @@
 package httpapi
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/ecol/chat-agent/internal/llm"
 )
 
 func TestRouter(t *testing.T) {
@@ -29,7 +32,10 @@ func TestRouter(t *testing.T) {
 		},
 	}
 
-	router := NewRouter()
+	router, err := NewRouter(Dependencies{LLM: stubLLMClient{}})
+	if err != nil {
+		t.Fatalf("NewRouter() error = %v", err)
+	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -49,4 +55,17 @@ func TestRouter(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestNewRouterRejectsMissingDependencies(t *testing.T) {
+	_, err := NewRouter(Dependencies{})
+	if err == nil {
+		t.Fatal("NewRouter() error = nil, want an error")
+	}
+}
+
+type stubLLMClient struct{}
+
+func (stubLLMClient) Chat(context.Context, llm.ChatRequest) (*llm.ChatResponse, error) {
+	return &llm.ChatResponse{}, nil
 }

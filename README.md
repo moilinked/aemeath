@@ -215,7 +215,7 @@ go build ./cmd/server
 - [x] 添加 `.env`、供应商选择和超时配置
 - [x] 定义厂商无关的 `llm.Client`
 - [x] 实现 OpenAI Chat Completions 兼容客户端
-- [ ] 将 LLM 配置与 Client 注入应用启动流程
+- [x] 将 LLM 配置与 Client 注入应用启动流程
 - [ ] 添加真实模型的最小连通性测试
 
 ### Chat Agent MVP
