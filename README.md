@@ -206,6 +206,14 @@ go test -count=1 ./...
 go build ./cmd/server
 ```
 
+真实 DeepSeek 最小连通性测试默认不会随单元测试运行。配置 `.env` 后手动执行：
+
+```powershell
+go test -tags=integration -run "^TestDeepSeekConnectivity$" -count=1 ./internal/llm
+```
+
+该测试只发送一次关闭思考模式、限制为 8 个输出 Token 的请求，但仍会产生少量 API 费用。
+
 ## TODO
 
 ### 基础设施
@@ -216,7 +224,7 @@ go build ./cmd/server
 - [x] 定义厂商无关的 `llm.Client`
 - [x] 实现 OpenAI Chat Completions 兼容客户端
 - [x] 将 LLM 配置与 Client 注入应用启动流程
-- [ ] 添加真实模型的最小连通性测试
+- [x] 添加真实模型的最小连通性测试
 
 ### Chat Agent MVP
 
