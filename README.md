@@ -15,6 +15,7 @@
 - OpenAI 兼容网关与 DeepSeek V4 配置切换
 - 工具调用、DeepSeek 思考内容和 Token Usage 数据结构
 - 配置与 LLM Client 单元测试
+- 版本受控、供应商无关的默认 System Prompt
 
 尚未实现 Chat API、Session、Tool Registry 和 Agent Loop，因此当前服务还不能直接进行聊天。
 
@@ -70,6 +71,7 @@ chat-agent/
 │   └── server/
 │       └── main.go
 ├── internal/
+│   ├── agent/
 │   ├── config/
 │   ├── httpapi/
 │   ├── llm/
@@ -82,7 +84,7 @@ chat-agent/
 └── README.md
 ```
 
-`agent`、`session` 和 `tools` 会在对应功能开发时创建，不预留空目录。
+`session` 和 `tools` 会在对应功能开发时创建，不预留空目录。
 
 ## 快速开始
 
@@ -228,7 +230,7 @@ go test -tags=integration -run "^TestDeepSeekConnectivity$" -count=1 ./internal/
 
 ### Chat Agent MVP
 
-- [ ] 定义 System Prompt
+- [x] 定义 System Prompt
 - [ ] 定义 `SessionStore` 接口
 - [ ] 实现并发安全的内存 Session Store
 - [ ] 定义 `Tool` 接口与 Tool Registry
