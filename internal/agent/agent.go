@@ -2,6 +2,7 @@ package agent
 
 import (
 	"errors"
+	"sync"
 
 	"github.com/ecol/chat-agent/internal/llm"
 	"github.com/ecol/chat-agent/internal/tools"
@@ -19,11 +20,13 @@ type Config struct {
 
 // Agent 编排 System Prompt、会话、LLM 和工具。
 type Agent struct {
-	llmClient     llm.Client
-	sessionStore  SessionStore
-	toolRegistry  *tools.Registry
-	systemMessage llm.Message
-	maxSteps      int
+	llmClient      llm.Client
+	sessionStore   SessionStore
+	toolRegistry   *tools.Registry
+	systemMessage  llm.Message
+	maxSteps       int
+	sessionGatesMu sync.Mutex
+	sessionGates   map[string]*sessionGate
 }
 
 // New 创建 Agent，并校验所有运行依赖和执行边界。
@@ -47,6 +50,7 @@ func New(config Config) (*Agent, error) {
 		toolRegistry:  config.Tools,
 		systemMessage: SystemMessage(),
 		maxSteps:      config.MaxSteps,
+		sessionGates:  make(map[string]*sessionGate),
 	}, nil
 }
 

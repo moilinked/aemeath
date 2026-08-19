@@ -21,8 +21,9 @@
 - 支持基础四则运算、括号和科学计数法的 Calculator Tool
 - 使用 Open-Meteo、无需 API Key 的 Weather Tool
 - 组合 LLM、Session 和 Tools，并限制最大执行步数的 Agent
+- 支持工具错误回传、Token 汇总和会话持久化的 Agent Loop
 
-尚未实现 Chat API 及 Agent Loop，因此当前服务还不能直接进行聊天。
+尚未实现 Chat API，因此当前服务还不能直接进行聊天。
 
 ## MVP 目标
 
@@ -246,7 +247,7 @@ go test -tags=integration -run "^TestDeepSeekConnectivity$" -count=1 ./internal/
 - [x] 实现 Calculator Tool
 - [x] 实现 Weather Tool
 - [x] 实现 Agent 与最大执行步数
-- [ ] 实现 LLM → Tool → Observation → LLM 的 Agent Loop
+- [x] 实现 LLM → Tool → Observation → LLM 的 Agent Loop
 - [ ] 实现 `POST /api/chat`
 - [ ] 添加请求校验、错误映射和 Agent 集成测试
 
