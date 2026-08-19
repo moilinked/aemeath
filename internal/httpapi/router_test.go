@@ -7,7 +7,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/ecol/chat-agent/internal/agent"
 	"github.com/ecol/chat-agent/internal/llm"
+	"github.com/ecol/chat-agent/internal/session"
+	"github.com/ecol/chat-agent/internal/tools"
 )
 
 func TestRouter(t *testing.T) {
@@ -32,7 +35,7 @@ func TestRouter(t *testing.T) {
 		},
 	}
 
-	router, err := NewRouter(Dependencies{LLM: stubLLMClient{}})
+	router, err := NewRouter(Dependencies{Agent: newHTTPTestAgent(t)})
 	if err != nil {
 		t.Fatalf("NewRouter() error = %v", err)
 	}
@@ -68,4 +71,23 @@ type stubLLMClient struct{}
 
 func (stubLLMClient) Chat(context.Context, llm.ChatRequest) (*llm.ChatResponse, error) {
 	return &llm.ChatResponse{}, nil
+}
+
+func newHTTPTestAgent(t *testing.T) *agent.Agent {
+	t.Helper()
+
+	registry, err := tools.NewRegistry()
+	if err != nil {
+		t.Fatalf("tools.NewRegistry() error = %v", err)
+	}
+	chatAgent, err := agent.New(agent.Config{
+		LLM:      stubLLMClient{},
+		Sessions: session.NewMemoryStore(),
+		Tools:    registry,
+		MaxSteps: 1,
+	})
+	if err != nil {
+		t.Fatalf("agent.New() error = %v", err)
+	}
+	return chatAgent
 }

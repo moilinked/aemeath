@@ -10,10 +10,13 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/ecol/chat-agent/internal/agent"
 	"github.com/ecol/chat-agent/internal/config"
 	"github.com/ecol/chat-agent/internal/httpapi"
 	"github.com/ecol/chat-agent/internal/llm"
 	"github.com/ecol/chat-agent/internal/server"
+	"github.com/ecol/chat-agent/internal/session"
+	"github.com/ecol/chat-agent/internal/tools"
 )
 
 func main() {
@@ -34,7 +37,12 @@ func run() error {
 		return err
 	}
 
-	router, err := httpapi.NewRouter(httpapi.Dependencies{LLM: llmClient})
+	chatAgent, err := newAgent(llmClient, cfg.Agent)
+	if err != nil {
+		return err
+	}
+
+	router, err := httpapi.NewRouter(httpapi.Dependencies{Agent: chatAgent})
 	if err != nil {
 		return fmt.Errorf("create HTTP router: %w", err)
 	}
@@ -64,4 +72,25 @@ func newLLMClient(cfg config.LLMConfig) (llm.Client, error) {
 	}
 
 	return client, nil
+}
+
+func newAgent(llmClient llm.Client, cfg config.AgentConfig) (*agent.Agent, error) {
+	toolRegistry, err := tools.NewRegistry(
+		tools.NewCalculatorTool(),
+		tools.NewWeatherTool(nil),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("create tool registry: %w", err)
+	}
+
+	chatAgent, err := agent.New(agent.Config{
+		LLM:      llmClient,
+		Sessions: session.NewMemoryStore(),
+		Tools:    toolRegistry,
+		MaxSteps: cfg.MaxSteps,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create agent: %w", err)
+	}
+	return chatAgent, nil
 }

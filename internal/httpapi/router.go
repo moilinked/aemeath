@@ -7,20 +7,20 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/ecol/chat-agent/internal/llm"
+	"github.com/ecol/chat-agent/internal/agent"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 )
 
 // Dependencies 包含 HTTP 层后续处理请求所需的应用依赖。
 type Dependencies struct {
-	LLM llm.Client
+	Agent *agent.Agent
 }
 
 // NewRouter 创建根 HTTP Handler，并校验启动所需依赖。
 func NewRouter(dependencies Dependencies) (http.Handler, error) {
-	if dependencies.LLM == nil {
-		return nil, errors.New("LLM client is required")
+	if dependencies.Agent == nil {
+		return nil, errors.New("agent is required")
 	}
 
 	router := chi.NewRouter()

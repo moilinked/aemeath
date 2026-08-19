@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -12,7 +13,7 @@ import (
 )
 
 const (
-	defaultAddress           = ":8080"
+	defaultServerPort        = 8080
 	defaultReadHeaderTimeout = 5 * time.Second
 	defaultReadTimeout       = 15 * time.Second
 	defaultWriteTimeout      = 30 * time.Second
@@ -23,6 +24,7 @@ const (
 	defaultOpenAIBaseURL     = "https://api.openai.com/v1"
 	defaultDeepSeekBaseURL   = "https://api.deepseek.com"
 	defaultDeepSeekModel     = "deepseek-v4-pro"
+	defaultAgentMaxSteps     = 8
 )
 
 // LLMProvider 表示当前启用的模型供应商。
@@ -45,7 +47,12 @@ type LLMConfig struct {
 	RequestTimeout time.Duration
 }
 
-// Config 包含 HTTP 服务和 LLM 配置。
+// AgentConfig 包含 Agent 的执行边界配置。
+type AgentConfig struct {
+	MaxSteps int
+}
+
+// Config 包含 HTTP 服务、LLM 和 Agent 配置。
 type Config struct {
 	Address           string
 	ReadHeaderTimeout time.Duration
@@ -54,6 +61,7 @@ type Config struct {
 	IdleTimeout       time.Duration
 	ShutdownTimeout   time.Duration
 	LLM               LLMConfig
+	Agent             AgentConfig
 }
 
 // Load 优先保留系统环境变量，并使用项目根目录的 .env 补充本地配置。
@@ -63,19 +71,30 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 
+	address, err := loadServerAddress()
+	if err != nil {
+		return Config{}, err
+	}
 	llmConfig, err := loadLLMConfig()
+	if err != nil {
+		return Config{}, err
+	}
+	agentMaxSteps, err := positiveIntOrDefault("AGENT_MAX_STEPS", defaultAgentMaxSteps)
 	if err != nil {
 		return Config{}, err
 	}
 
 	cfg := Config{
-		Address:           envOrDefault("SERVER_ADDRESS", defaultAddress),
+		Address:           address,
 		ReadHeaderTimeout: defaultReadHeaderTimeout,
 		ReadTimeout:       defaultReadTimeout,
 		WriteTimeout:      defaultWriteTimeout,
 		IdleTimeout:       defaultIdleTimeout,
 		ShutdownTimeout:   defaultShutdownTimeout,
 		LLM:               llmConfig,
+		Agent: AgentConfig{
+			MaxSteps: agentMaxSteps,
+		},
 	}
 
 	durationSettings := []struct {
@@ -144,4 +163,35 @@ func envOrDefault(name, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+func positiveIntOrDefault(name string, fallback int) (int, error) {
+	value := os.Getenv(name)
+	if value == "" {
+		return fallback, nil
+	}
+
+	parsed, err := strconv.Atoi(value)
+	if err != nil {
+		return 0, fmt.Errorf("parse %s: %w", name, err)
+	}
+	if parsed <= 0 {
+		return 0, fmt.Errorf("%s must be a positive integer", name)
+	}
+	return parsed, nil
+}
+
+func loadServerAddress() (string, error) {
+	if address := strings.TrimSpace(os.Getenv("SERVER_ADDRESS")); address != "" {
+		return address, nil
+	}
+
+	port, err := positiveIntOrDefault("SERVER_PORT", defaultServerPort)
+	if err != nil {
+		return "", err
+	}
+	if port > 65535 {
+		return "", errors.New("SERVER_PORT must not exceed 65535")
+	}
+	return fmt.Sprintf(":%d", port), nil
 }

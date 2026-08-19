@@ -17,8 +17,12 @@
 - 配置与 LLM Client 单元测试
 - 版本受控、供应商无关的默认 System Prompt
 - `SessionStore` 接口与并发安全的内存会话存储
+- `Tool` 接口与并发安全、顺序稳定的 Tool Registry
+- 支持基础四则运算、括号和科学计数法的 Calculator Tool
+- 使用 Open-Meteo、无需 API Key 的 Weather Tool
+- 组合 LLM、Session 和 Tools，并限制最大执行步数的 Agent
 
-尚未实现 Chat API、Session、Tool Registry 和 Agent Loop，因此当前服务还不能直接进行聊天。
+尚未实现 Chat API 及 Agent Loop，因此当前服务还不能直接进行聊天。
 
 ## MVP 目标
 
@@ -80,13 +84,14 @@ chat-agent/
 │   │   ├── openai_compatible.go
 │   │   └── types.go
 │   ├── session/
+│   ├── tools/
 │   └── server/
 ├── .env.example
 ├── go.mod
 └── README.md
 ```
 
-`tools` 会在对应功能开发时创建，不预留空目录。
+功能目录只在对应能力开始实现时创建，不预留空目录。
 
 ## 快速开始
 
@@ -186,7 +191,8 @@ POST /api/chat
 
 | 环境变量 | 默认值 | 说明 |
 | --- | --- | --- |
-| `SERVER_ADDRESS` | `:8080` | HTTP 监听地址 |
+| `SERVER_PORT` | `8080` | HTTP 监听端口，范围为 `1-65535` |
+| `SERVER_ADDRESS` | 无 | 完整 HTTP 监听地址；设置后优先于 `SERVER_PORT` |
 | `SERVER_READ_HEADER_TIMEOUT` | `5s` | 请求头读取超时 |
 | `SERVER_READ_TIMEOUT` | `15s` | 请求读取超时 |
 | `SERVER_WRITE_TIMEOUT` | `30s` | 响应写入超时 |
@@ -194,6 +200,7 @@ POST /api/chat
 | `SERVER_SHUTDOWN_TIMEOUT` | `10s` | 优雅关闭超时 |
 | `LLM_PROVIDER` | `deepseek` | `openai` 或 `deepseek` |
 | `LLM_REQUEST_TIMEOUT` | `60s` | 单次 LLM 请求超时 |
+| `AGENT_MAX_STEPS` | `8` | 单次 Agent 运行允许的最大 LLM 决策次数 |
 | `OPENAI_API_KEY` | 无 | OpenAI 或兼容网关密钥 |
 | `OPENAI_BASE_URL` | `https://api.openai.com/v1` | OpenAI 兼容基础地址 |
 | `OPENAI_MODEL` | 无 | 网关提供的模型 ID |
@@ -235,10 +242,10 @@ go test -tags=integration -run "^TestDeepSeekConnectivity$" -count=1 ./internal/
 - [x] 定义 System Prompt
 - [x] 定义 `SessionStore` 接口
 - [x] 实现并发安全的内存 Session Store
-- [ ] 定义 `Tool` 接口与 Tool Registry
-- [ ] 实现 Calculator Tool
-- [ ] 实现 Weather Tool
-- [ ] 实现 Agent 与最大执行步数
+- [x] 定义 `Tool` 接口与 Tool Registry
+- [x] 实现 Calculator Tool
+- [x] 实现 Weather Tool
+- [x] 实现 Agent 与最大执行步数
 - [ ] 实现 LLM → Tool → Observation → LLM 的 Agent Loop
 - [ ] 实现 `POST /api/chat`
 - [ ] 添加请求校验、错误映射和 Agent 集成测试

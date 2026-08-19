@@ -1,10 +1,12 @@
 package main
 
 import (
+	"context"
 	"testing"
 	"time"
 
 	"github.com/ecol/chat-agent/internal/config"
+	"github.com/ecol/chat-agent/internal/llm"
 )
 
 func TestNewLLMClient(t *testing.T) {
@@ -63,4 +65,57 @@ func TestNewLLMClient(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestNewAgent(t *testing.T) {
+	tests := []struct {
+		name     string
+		client   llm.Client
+		maxSteps int
+		wantErr  bool
+	}{
+		{
+			name:     "valid configuration",
+			client:   stubServerLLMClient{},
+			maxSteps: 8,
+		},
+		{
+			name:     "missing LLM client",
+			maxSteps: 8,
+			wantErr:  true,
+		},
+		{
+			name:     "invalid max steps",
+			client:   stubServerLLMClient{},
+			maxSteps: 0,
+			wantErr:  true,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			created, err := newAgent(test.client, config.AgentConfig{MaxSteps: test.maxSteps})
+			if test.wantErr {
+				if err == nil {
+					t.Fatal("newAgent() error = nil, want an error")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("newAgent() error = %v", err)
+			}
+			if created.MaxSteps() != test.maxSteps {
+				t.Fatalf("MaxSteps() = %d, want %d", created.MaxSteps(), test.maxSteps)
+			}
+		})
+	}
+}
+
+type stubServerLLMClient struct{}
+
+func (stubServerLLMClient) Chat(
+	context.Context,
+	llm.ChatRequest,
+) (*llm.ChatResponse, error) {
+	return &llm.ChatResponse{}, nil
 }
