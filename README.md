@@ -16,6 +16,7 @@
 - 工具调用、DeepSeek 思考内容和 Token Usage 数据结构
 - 配置与 LLM Client 单元测试
 - 版本受控、供应商无关的默认 System Prompt
+- `SessionStore` 接口与并发安全的内存会话存储
 
 尚未实现 Chat API、Session、Tool Registry 和 Agent Loop，因此当前服务还不能直接进行聊天。
 
@@ -78,13 +79,14 @@ chat-agent/
 │   │   ├── client.go
 │   │   ├── openai_compatible.go
 │   │   └── types.go
+│   ├── session/
 │   └── server/
 ├── .env.example
 ├── go.mod
 └── README.md
 ```
 
-`session` 和 `tools` 会在对应功能开发时创建，不预留空目录。
+`tools` 会在对应功能开发时创建，不预留空目录。
 
 ## 快速开始
 
@@ -231,8 +233,8 @@ go test -tags=integration -run "^TestDeepSeekConnectivity$" -count=1 ./internal/
 ### Chat Agent MVP
 
 - [x] 定义 System Prompt
-- [ ] 定义 `SessionStore` 接口
-- [ ] 实现并发安全的内存 Session Store
+- [x] 定义 `SessionStore` 接口
+- [x] 实现并发安全的内存 Session Store
 - [ ] 定义 `Tool` 接口与 Tool Registry
 - [ ] 实现 Calculator Tool
 - [ ] 实现 Weather Tool
