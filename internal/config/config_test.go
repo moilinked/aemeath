@@ -2,8 +2,15 @@ package config
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 	"time"
+)
+
+const (
+	testAuthUsername     = "test-user"
+	testAuthPasswordHash = "test-bcrypt-hash"
+	testJWTSecret        = "0123456789abcdef0123456789abcdef"
 )
 
 func TestLoad(t *testing.T) {
@@ -18,10 +25,19 @@ func TestLoad(t *testing.T) {
 		openAIAPIKey      string
 		openAIBaseURL     string
 		openAIModel       string
+		authUsername      string
+		authPasswordHash  string
+		missingUsername   bool
+		missingPassword   bool
+		jwtSecret         string
+		jwtAccessTTL      string
+		jwtIssuer         string
+		missingJWTSecret  bool
 		wantAddress       string
 		wantTimeout       time.Duration
 		wantLLM           LLMConfig
 		wantAgent         AgentConfig
+		wantAuth          AuthConfig
 		wantErr           bool
 	}{
 		{
@@ -35,6 +51,13 @@ func TestLoad(t *testing.T) {
 				RequestTimeout: defaultLLMRequestTimeout,
 			},
 			wantAgent: AgentConfig{MaxSteps: defaultAgentMaxSteps},
+			wantAuth: AuthConfig{
+				Username:     testAuthUsername,
+				PasswordHash: testAuthPasswordHash,
+				SigningKey:   testJWTSecret,
+				AccessTTL:    defaultJWTAccessTTL,
+				Issuer:       defaultJWTIssuer,
+			},
 		},
 		{
 			name:              "reads environment",
@@ -47,6 +70,11 @@ func TestLoad(t *testing.T) {
 			openAIAPIKey:      "secret-key",
 			openAIBaseURL:     "https://gateway.example.com/v1",
 			openAIModel:       "chat-gpt-luna",
+			authUsername:      "configured-user",
+			authPasswordHash:  "configured-bcrypt-hash",
+			jwtSecret:         "abcdef0123456789abcdef0123456789",
+			jwtAccessTTL:      "30m",
+			jwtIssuer:         "test-issuer",
 			wantAddress:       "127.0.0.1:9090",
 			wantTimeout:       20 * time.Second,
 			wantLLM: LLMConfig{
@@ -57,6 +85,13 @@ func TestLoad(t *testing.T) {
 				RequestTimeout: 45 * time.Second,
 			},
 			wantAgent: AgentConfig{MaxSteps: 12},
+			wantAuth: AuthConfig{
+				Username:     "configured-user",
+				PasswordHash: "configured-bcrypt-hash",
+				SigningKey:   "abcdef0123456789abcdef0123456789",
+				AccessTTL:    30 * time.Minute,
+				Issuer:       "test-issuer",
+			},
 		},
 		{
 			name:        "reads server port",
@@ -70,6 +105,13 @@ func TestLoad(t *testing.T) {
 				RequestTimeout: defaultLLMRequestTimeout,
 			},
 			wantAgent: AgentConfig{MaxSteps: defaultAgentMaxSteps},
+			wantAuth: AuthConfig{
+				Username:     testAuthUsername,
+				PasswordHash: testAuthPasswordHash,
+				SigningKey:   testJWTSecret,
+				AccessTTL:    defaultJWTAccessTTL,
+				Issuer:       defaultJWTIssuer,
+			},
 		},
 		{
 			name:        "rejects invalid duration",
@@ -101,6 +143,41 @@ func TestLoad(t *testing.T) {
 			serverPort: "65536",
 			wantErr:    true,
 		},
+		{
+			name:            "rejects missing auth username",
+			missingUsername: true,
+			wantErr:         true,
+		},
+		{
+			name:            "rejects missing auth password hash",
+			missingPassword: true,
+			wantErr:         true,
+		},
+		{
+			name:             "rejects missing JWT secret",
+			missingJWTSecret: true,
+			wantErr:          true,
+		},
+		{
+			name:      "rejects short JWT secret",
+			jwtSecret: "too-short",
+			wantErr:   true,
+		},
+		{
+			name:         "rejects invalid JWT access TTL",
+			jwtAccessTTL: "invalid",
+			wantErr:      true,
+		},
+		{
+			name:         "rejects non-positive JWT access TTL",
+			jwtAccessTTL: "0s",
+			wantErr:      true,
+		},
+		{
+			name:      "rejects blank JWT issuer",
+			jwtIssuer: " ",
+			wantErr:   true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -117,11 +194,43 @@ func TestLoad(t *testing.T) {
 			t.Setenv("DEEPSEEK_API_KEY", "")
 			t.Setenv("DEEPSEEK_BASE_URL", "")
 			t.Setenv("DEEPSEEK_MODEL", "")
+			username := testAuthUsername
+			if tt.authUsername != "" {
+				username = tt.authUsername
+			}
+			if tt.missingUsername {
+				username = ""
+			}
+			passwordHash := testAuthPasswordHash
+			if tt.authPasswordHash != "" {
+				passwordHash = tt.authPasswordHash
+			}
+			if tt.missingPassword {
+				passwordHash = ""
+			}
+			t.Setenv("AUTH_USERNAME", username)
+			t.Setenv("AUTH_PASSWORD_HASH", passwordHash)
+			signingKey := testJWTSecret
+			if tt.jwtSecret != "" {
+				signingKey = tt.jwtSecret
+			}
+			if tt.missingJWTSecret {
+				signingKey = ""
+			}
+			t.Setenv("JWT_SECRET", signingKey)
+			t.Setenv("JWT_ACCESS_TTL", tt.jwtAccessTTL)
+			t.Setenv("JWT_ISSUER", tt.jwtIssuer)
 
 			cfg, err := Load()
 			if tt.wantErr {
 				if err == nil {
 					t.Fatal("Load() error = nil, want an error")
+				}
+				if signingKey != "" && strings.Contains(err.Error(), signingKey) {
+					t.Fatal("Load() error exposes JWT signing key")
+				}
+				if passwordHash != "" && strings.Contains(err.Error(), passwordHash) {
+					t.Fatal("Load() error exposes password hash")
 				}
 				return
 			}
@@ -139,6 +248,25 @@ func TestLoad(t *testing.T) {
 			}
 			if cfg.Agent != tt.wantAgent {
 				t.Errorf("Agent = %#v, want %#v", cfg.Agent, tt.wantAgent)
+			}
+			if cfg.Auth.SigningKey != tt.wantAuth.SigningKey {
+				t.Error("Auth signing key does not match expected value")
+			}
+			if cfg.Auth.Username != tt.wantAuth.Username {
+				t.Error("Auth username does not match expected value")
+			}
+			if cfg.Auth.PasswordHash != tt.wantAuth.PasswordHash {
+				t.Error("Auth password hash does not match expected value")
+			}
+			if cfg.Auth.AccessTTL != tt.wantAuth.AccessTTL {
+				t.Errorf(
+					"Auth access TTL = %s, want %s",
+					cfg.Auth.AccessTTL,
+					tt.wantAuth.AccessTTL,
+				)
+			}
+			if cfg.Auth.Issuer != tt.wantAuth.Issuer {
+				t.Errorf("Auth issuer = %q, want %q", cfg.Auth.Issuer, tt.wantAuth.Issuer)
 			}
 		})
 	}

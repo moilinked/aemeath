@@ -7,6 +7,7 @@ import (
 
 	"github.com/ecol/chat-agent/internal/config"
 	"github.com/ecol/chat-agent/internal/llm"
+	"golang.org/x/crypto/bcrypt"
 )
 
 func TestNewLLMClient(t *testing.T) {
@@ -106,6 +107,72 @@ func TestNewAgent(t *testing.T) {
 			}
 			if created.MaxSteps() != test.maxSteps {
 				t.Fatalf("MaxSteps() = %d, want %d", created.MaxSteps(), test.maxSteps)
+			}
+		})
+	}
+}
+
+func TestNewAuthService(t *testing.T) {
+	passwordHash, err := bcrypt.GenerateFromPassword([]byte("test-password"), bcrypt.MinCost)
+	if err != nil {
+		t.Fatalf("bcrypt.GenerateFromPassword() error = %v", err)
+	}
+	tests := []struct {
+		name    string
+		config  config.AuthConfig
+		wantErr bool
+	}{
+		{
+			name: "valid configuration",
+			config: config.AuthConfig{
+				Username:     "test-user",
+				PasswordHash: string(passwordHash),
+				SigningKey:   "0123456789abcdef0123456789abcdef",
+				AccessTTL:    time.Hour,
+				Issuer:       "test-issuer",
+			},
+		},
+		{
+			name: "short signing key",
+			config: config.AuthConfig{
+				Username:     "test-user",
+				PasswordHash: string(passwordHash),
+				SigningKey:   "short",
+				AccessTTL:    time.Hour,
+				Issuer:       "test-issuer",
+			},
+			wantErr: true,
+		},
+		{
+			name: "invalid TTL",
+			config: config.AuthConfig{
+				Username:     "test-user",
+				PasswordHash: string(passwordHash),
+				SigningKey:   "0123456789abcdef0123456789abcdef",
+				Issuer:       "test-issuer",
+			},
+			wantErr: true,
+		},
+		{
+			name: "missing issuer",
+			config: config.AuthConfig{
+				Username:     "test-user",
+				PasswordHash: string(passwordHash),
+				SigningKey:   "0123456789abcdef0123456789abcdef",
+				AccessTTL:    time.Hour,
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := newAuthService(test.config)
+			if test.wantErr && err == nil {
+				t.Fatal("newAuthService() error = nil, want an error")
+			}
+			if !test.wantErr && err != nil {
+				t.Fatalf("newAuthService() error = %v", err)
 			}
 		})
 	}

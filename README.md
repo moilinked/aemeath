@@ -22,6 +22,7 @@
 - 使用 Open-Meteo、无需 API Key 的 Weather Tool
 - 组合 LLM、Session 和 Tools，并限制最大执行步数的 Agent
 - 支持工具错误回传、Token 汇总和会话持久化的 Agent Loop
+- 固定用户、bcrypt 密码校验与 Bearer JWT 路由保护
 
 尚未实现 Chat API，因此当前服务还不能直接进行聊天。
 
@@ -78,6 +79,7 @@ chat-agent/
 │       └── main.go
 ├── internal/
 │   ├── agent/
+│   ├── auth/
 │   ├── config/
 │   ├── httpapi/
 │   ├── llm/
@@ -202,6 +204,11 @@ POST /api/chat
 | `LLM_PROVIDER` | `deepseek` | `openai` 或 `deepseek` |
 | `LLM_REQUEST_TIMEOUT` | `60s` | 单次 LLM 请求超时 |
 | `AGENT_MAX_STEPS` | `8` | 单次 Agent 运行允许的最大 LLM 决策次数 |
+| `AUTH_USERNAME` | 无 | 单用户登录名，必填 |
+| `AUTH_PASSWORD_HASH` | 无 | 登录密码的 bcrypt 哈希，必填；不得配置密码明文 |
+| `JWT_SECRET` | 无 | HS256 签名密钥，必填且至少 32 字节 |
+| `JWT_ACCESS_TTL` | `168h` | Access Token 有效期（7 天） |
+| `JWT_ISSUER` | `chat-agent` | JWT issuer |
 | `OPENAI_API_KEY` | 无 | OpenAI 或兼容网关密钥 |
 | `OPENAI_BASE_URL` | `https://api.openai.com/v1` | OpenAI 兼容基础地址 |
 | `OPENAI_MODEL` | 无 | 网关提供的模型 ID |
@@ -248,11 +255,13 @@ go test -tags=integration -run "^TestDeepSeekConnectivity$" -count=1 ./internal/
 - [x] 实现 Weather Tool
 - [x] 实现 Agent 与最大执行步数
 - [x] 实现 LLM → Tool → Observation → LLM 的 Agent Loop
+- [x] 实现固定用户 JWT 登录与 API 路由保护
 - [ ] 实现 `POST /api/chat`
 - [ ] 添加请求校验、错误映射和 Agent 集成测试
 
 ### 后续阶段
 
+- [ ] 使用数据库与 `UserStore` 替代临时环境变量单用户凭据
 - [ ] Web Chat UI
 - [ ] SSE 流式响应
 - [ ] PostgreSQL 或 Redis Session 持久化

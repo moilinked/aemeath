@@ -15,12 +15,16 @@ import (
 // Dependencies 包含 HTTP 层后续处理请求所需的应用依赖。
 type Dependencies struct {
 	Agent *agent.Agent
+	Auth  AuthService
 }
 
 // NewRouter 创建根 HTTP Handler，并校验启动所需依赖。
 func NewRouter(dependencies Dependencies) (http.Handler, error) {
 	if dependencies.Agent == nil {
 		return nil, errors.New("agent is required")
+	}
+	if dependencies.Auth == nil {
+		return nil, errors.New("auth service is required")
 	}
 
 	router := chi.NewRouter()
@@ -30,6 +34,11 @@ func NewRouter(dependencies Dependencies) (http.Handler, error) {
 	router.Use(middleware.Recoverer)
 
 	router.Get("/healthz", health)
+	router.Post("/api/auth/login", login(dependencies.Auth))
+	router.Route("/api", func(api chi.Router) {
+		api.Use(requireBearer(dependencies.Auth))
+		api.Get("/auth/me", me)
+	})
 
 	return router, nil
 }

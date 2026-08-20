@@ -6,11 +6,14 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ecol/chat-agent/internal/agent"
+	"github.com/ecol/chat-agent/internal/auth"
 	"github.com/ecol/chat-agent/internal/llm"
 	"github.com/ecol/chat-agent/internal/session"
 	"github.com/ecol/chat-agent/internal/tools"
+	"golang.org/x/crypto/bcrypt"
 )
 
 func TestRouter(t *testing.T) {
@@ -35,7 +38,10 @@ func TestRouter(t *testing.T) {
 		},
 	}
 
-	router, err := NewRouter(Dependencies{Agent: newHTTPTestAgent(t)})
+	router, err := NewRouter(Dependencies{
+		Agent: newHTTPTestAgent(t),
+		Auth:  newHTTPTestAuth(t),
+	})
 	if err != nil {
 		t.Fatalf("NewRouter() error = %v", err)
 	}
@@ -61,9 +67,27 @@ func TestRouter(t *testing.T) {
 }
 
 func TestNewRouterRejectsMissingDependencies(t *testing.T) {
-	_, err := NewRouter(Dependencies{})
-	if err == nil {
-		t.Fatal("NewRouter() error = nil, want an error")
+	tests := []struct {
+		name         string
+		dependencies Dependencies
+	}{
+		{
+			name:         "missing agent",
+			dependencies: Dependencies{Auth: newHTTPTestAuth(t)},
+		},
+		{
+			name:         "missing auth service",
+			dependencies: Dependencies{Agent: newHTTPTestAgent(t)},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := NewRouter(test.dependencies)
+			if err == nil {
+				t.Fatal("NewRouter() error = nil, want an error")
+			}
+		})
 	}
 }
 
@@ -90,4 +114,27 @@ func newHTTPTestAgent(t *testing.T) *agent.Agent {
 		t.Fatalf("agent.New() error = %v", err)
 	}
 	return chatAgent
+}
+
+func newHTTPTestAuth(t *testing.T) *auth.Service {
+	t.Helper()
+
+	passwordHash, err := bcrypt.GenerateFromPassword(
+		[]byte(defaultHTTPTestPassword()),
+		bcrypt.MinCost,
+	)
+	if err != nil {
+		t.Fatalf("bcrypt.GenerateFromPassword() error = %v", err)
+	}
+	service, err := auth.New(auth.Config{
+		Username:     testHTTPUsername,
+		PasswordHash: passwordHash,
+		SigningKey:   []byte("0123456789abcdef0123456789abcdef"),
+		AccessTTL:    time.Hour,
+		Issuer:       "test-issuer",
+	})
+	if err != nil {
+		t.Fatalf("auth.New() error = %v", err)
+	}
+	return service
 }

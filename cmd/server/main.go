@@ -11,6 +11,7 @@ import (
 	"syscall"
 
 	"github.com/ecol/chat-agent/internal/agent"
+	"github.com/ecol/chat-agent/internal/auth"
 	"github.com/ecol/chat-agent/internal/config"
 	"github.com/ecol/chat-agent/internal/httpapi"
 	"github.com/ecol/chat-agent/internal/llm"
@@ -42,7 +43,15 @@ func run() error {
 		return err
 	}
 
-	router, err := httpapi.NewRouter(httpapi.Dependencies{Agent: chatAgent})
+	authService, err := newAuthService(cfg.Auth)
+	if err != nil {
+		return err
+	}
+
+	router, err := httpapi.NewRouter(httpapi.Dependencies{
+		Agent: chatAgent,
+		Auth:  authService,
+	})
 	if err != nil {
 		return fmt.Errorf("create HTTP router: %w", err)
 	}
@@ -93,4 +102,19 @@ func newAgent(llmClient llm.Client, cfg config.AgentConfig) (*agent.Agent, error
 		return nil, fmt.Errorf("create agent: %w", err)
 	}
 	return chatAgent, nil
+}
+
+func newAuthService(cfg config.AuthConfig) (*auth.Service, error) {
+	// TODO: 接入用户数据库后，在此注入 UserStore，停止从配置装配单用户凭据。
+	service, err := auth.New(auth.Config{
+		Username:     cfg.Username,
+		PasswordHash: []byte(cfg.PasswordHash),
+		SigningKey:   []byte(cfg.SigningKey),
+		AccessTTL:    cfg.AccessTTL,
+		Issuer:       cfg.Issuer,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create auth service: %w", err)
+	}
+	return service, nil
 }

@@ -25,6 +25,9 @@ const (
 	defaultDeepSeekBaseURL   = "https://api.deepseek.com"
 	defaultDeepSeekModel     = "deepseek-v4-pro"
 	defaultAgentMaxSteps     = 8
+	defaultJWTAccessTTL      = 7 * 24 * time.Hour
+	defaultJWTIssuer         = "chat-agent"
+	minimumJWTSecretLength   = 32
 )
 
 // LLMProvider 表示当前启用的模型供应商。
@@ -52,7 +55,18 @@ type AgentConfig struct {
 	MaxSteps int
 }
 
-// Config 包含 HTTP 服务、LLM 和 Agent 配置。
+// TODO: 用户信息迁移到数据库后，从 AuthConfig 移除 Username 和 PasswordHash。
+// AuthConfig 包含临时单用户凭据与 JWT Access Token 配置。
+// PasswordHash 和 SigningKey 只从环境变量读取，禁止写入日志或提交到版本控制。
+type AuthConfig struct {
+	Username     string
+	PasswordHash string
+	SigningKey   string
+	AccessTTL    time.Duration
+	Issuer       string
+}
+
+// Config 包含 HTTP 服务、LLM、Agent 和认证配置。
 type Config struct {
 	Address           string
 	ReadHeaderTimeout time.Duration
@@ -62,6 +76,7 @@ type Config struct {
 	ShutdownTimeout   time.Duration
 	LLM               LLMConfig
 	Agent             AgentConfig
+	Auth              AuthConfig
 }
 
 // Load 优先保留系统环境变量，并使用项目根目录的 .env 补充本地配置。
@@ -83,6 +98,10 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	authConfig, err := loadAuthConfig()
+	if err != nil {
+		return Config{}, err
+	}
 
 	cfg := Config{
 		Address:           address,
@@ -95,6 +114,7 @@ func Load() (Config, error) {
 		Agent: AgentConfig{
 			MaxSteps: agentMaxSteps,
 		},
+		Auth: authConfig,
 	}
 
 	durationSettings := []struct {
@@ -194,4 +214,47 @@ func loadServerAddress() (string, error) {
 		return "", errors.New("SERVER_PORT must not exceed 65535")
 	}
 	return fmt.Sprintf(":%d", port), nil
+}
+
+func loadAuthConfig() (AuthConfig, error) {
+	username := strings.TrimSpace(os.Getenv("AUTH_USERNAME"))
+	if username == "" {
+		return AuthConfig{}, errors.New("AUTH_USERNAME is required")
+	}
+	passwordHash := os.Getenv("AUTH_PASSWORD_HASH")
+	if strings.TrimSpace(passwordHash) == "" {
+		return AuthConfig{}, errors.New("AUTH_PASSWORD_HASH is required")
+	}
+
+	signingKey := os.Getenv("JWT_SECRET")
+	if len(signingKey) < minimumJWTSecretLength {
+		return AuthConfig{}, fmt.Errorf(
+			"JWT_SECRET must be at least %d bytes",
+			minimumJWTSecretLength,
+		)
+	}
+
+	accessTTL := defaultJWTAccessTTL
+	if value := os.Getenv("JWT_ACCESS_TTL"); value != "" {
+		parsed, err := time.ParseDuration(value)
+		if err != nil {
+			return AuthConfig{}, fmt.Errorf("parse JWT_ACCESS_TTL: %w", err)
+		}
+		if parsed <= 0 {
+			return AuthConfig{}, errors.New("JWT_ACCESS_TTL must be greater than zero")
+		}
+		accessTTL = parsed
+	}
+
+	issuer := strings.TrimSpace(envOrDefault("JWT_ISSUER", defaultJWTIssuer))
+	if issuer == "" {
+		return AuthConfig{}, errors.New("JWT_ISSUER is required")
+	}
+	return AuthConfig{
+		Username:     username,
+		PasswordHash: passwordHash,
+		SigningKey:   signingKey,
+		AccessTTL:    accessTTL,
+		Issuer:       issuer,
+	}, nil
 }
