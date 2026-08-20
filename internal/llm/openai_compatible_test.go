@@ -6,7 +6,11 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
+	"time"
+
+	"github.com/ecol/chat-agent/internal/retry"
 )
 
 func TestNewOpenAICompatibleClient(t *testing.T) {
@@ -213,6 +217,9 @@ func TestOpenAICompatibleClientChatErrors(t *testing.T) {
 				APIKey:     "test-key",
 				Model:      "test-model",
 				HTTPClient: server.Client(),
+				RetryPolicy: retry.Policy{
+					MaxAttempts: 1,
+				},
 			})
 			if err != nil {
 				t.Fatalf("NewOpenAICompatibleClient() error = %v", err)
@@ -262,5 +269,52 @@ func TestOpenAICompatibleClientChatHonorsContext(t *testing.T) {
 	})
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("Chat() error = %v, want context.Canceled", err)
+	}
+}
+
+func TestOpenAICompatibleClientRetriesTransientError(t *testing.T) {
+	var attempts atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if attempts.Add(1) < 3 {
+			w.WriteHeader(http.StatusBadGateway)
+			_, _ = w.Write([]byte(`{"error":{"message":"temporary"}}`))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"id":"chat-retry",
+			"model":"test-model",
+			"choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],
+			"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}
+		}`))
+	}))
+	t.Cleanup(server.Close)
+
+	client, err := NewOpenAICompatibleClient(OpenAICompatibleConfig{
+		BaseURL:    server.URL,
+		APIKey:     "test-key",
+		Model:      "test-model",
+		HTTPClient: server.Client(),
+		RetryPolicy: retry.Policy{
+			MaxAttempts:     3,
+			InitialInterval: time.Nanosecond,
+			MaxInterval:     time.Millisecond,
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewOpenAICompatibleClient() error = %v", err)
+	}
+
+	response, err := client.Chat(context.Background(), ChatRequest{
+		Messages: []Message{{Role: RoleUser, Content: "你好"}},
+	})
+	if err != nil {
+		t.Fatalf("Chat() error = %v", err)
+	}
+	if response == nil || response.Message.Content != "ok" {
+		t.Fatalf("Chat() response = %#v, want retried success", response)
+	}
+	if attempts.Load() != 3 {
+		t.Fatalf("attempts = %d, want 3", attempts.Load())
 	}
 }

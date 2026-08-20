@@ -244,6 +244,52 @@ func TestWeatherToolRejectsForecastWithoutCurrentWeather(t *testing.T) {
 	}
 }
 
+func TestWeatherToolRetriesTransientProviderError(t *testing.T) {
+	var requestCount atomic.Int32
+	client := &http.Client{
+		Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			count := requestCount.Add(1)
+			if request.URL.Host == "geocoding-api.open-meteo.com" && count < 3 {
+				return jsonResponse(http.StatusBadGateway, `{"reason":"temporary"}`), nil
+			}
+			if request.URL.Host == "geocoding-api.open-meteo.com" {
+				return jsonResponse(http.StatusOK, `{
+					"results": [{
+						"name": "上海",
+						"latitude": 31.2,
+						"longitude": 121.4
+					}]
+				}`), nil
+			}
+			return jsonResponse(http.StatusOK, `{
+				"timezone": "Asia/Shanghai",
+				"current": {
+					"time": "2026-08-20T10:00",
+					"temperature_2m": 30,
+					"apparent_temperature": 32,
+					"relative_humidity_2m": 60,
+					"weather_code": 0,
+					"wind_speed_10m": 5
+				}
+			}`), nil
+		}),
+	}
+
+	result, err := tools.NewWeatherTool(client).Execute(
+		context.Background(),
+		json.RawMessage(`{"location":"上海"}`),
+	)
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if result == "" {
+		t.Fatal("Execute() result is empty")
+	}
+	if requestCount.Load() != 4 {
+		t.Fatalf("request count = %d, want 4", requestCount.Load())
+	}
+}
+
 func TestWeatherToolHonorsCanceledContext(t *testing.T) {
 	var called atomic.Bool
 	tool := tools.NewWeatherTool(&http.Client{

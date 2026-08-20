@@ -2,6 +2,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -12,9 +13,14 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 )
 
+// ChatRunner 是 HTTP 聊天边界依赖的最小 Agent 能力。
+type ChatRunner interface {
+	Run(ctx context.Context, sessionID string, userMessage string) (*agent.Result, error)
+}
+
 // Dependencies 包含 HTTP 层后续处理请求所需的应用依赖。
 type Dependencies struct {
-	Agent *agent.Agent
+	Agent ChatRunner
 	Auth  AuthService
 }
 
@@ -33,11 +39,14 @@ func NewRouter(dependencies Dependencies) (http.Handler, error) {
 	router.Use(middleware.Logger)
 	router.Use(middleware.Recoverer)
 
+	idempotency := newIdempotencyStore(defaultChatIdempotencyTTL)
+
 	router.Get("/healthz", health)
 	router.Post("/api/auth/login", login(dependencies.Auth))
 	router.Route("/api", func(api chi.Router) {
 		api.Use(requireBearer(dependencies.Auth))
 		api.Get("/auth/me", me)
+		api.Post("/chat", chat(dependencies.Agent, idempotency))
 	})
 
 	return router, nil

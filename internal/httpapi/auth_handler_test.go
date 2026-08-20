@@ -274,11 +274,15 @@ func TestAPIRouteBoundary(t *testing.T) {
 		t.Fatalf("health status = %d, want 200", healthRecorder.Code)
 	}
 
-	for _, path := range []string{"/api/auth/me", "/api/missing"} {
+	for _, path := range []string{"/api/auth/me", "/api/chat", "/api/missing"} {
+		method := http.MethodGet
+		if path == "/api/chat" {
+			method = http.MethodPost
+		}
 		protectedRecorder := httptest.NewRecorder()
 		router.ServeHTTP(
 			protectedRecorder,
-			httptest.NewRequest(http.MethodGet, path, nil),
+			httptest.NewRequest(method, path, nil),
 		)
 		if protectedRecorder.Code != http.StatusUnauthorized {
 			t.Fatalf("protected path %s status = %d, want 401", path, protectedRecorder.Code)

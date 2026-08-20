@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+
+	"github.com/ecol/chat-agent/internal/retry"
 )
 
 const maxResponseBodySize = 4 << 20
@@ -17,18 +19,20 @@ const maxResponseBodySize = 4 << 20
 // OpenAICompatibleConfig 配置一个 OpenAI Chat Completions 兼容客户端。
 // BaseURL 可填写 OpenAI、DeepSeek 或内部兼容网关的基础地址。
 type OpenAICompatibleConfig struct {
-	BaseURL    string
-	APIKey     string
-	Model      string
-	HTTPClient *http.Client
+	BaseURL     string
+	APIKey      string
+	Model       string
+	HTTPClient  *http.Client
+	RetryPolicy retry.Policy
 }
 
 // OpenAICompatibleClient 调用 OpenAI 格式的非流式 Chat Completions API。
 type OpenAICompatibleClient struct {
-	endpoint   string
-	apiKey     string
-	model      string
-	httpClient *http.Client
+	endpoint    string
+	apiKey      string
+	model       string
+	httpClient  *http.Client
+	retryPolicy retry.Policy
 }
 
 // NewOpenAICompatibleClient 创建 OpenAI 格式兼容客户端。
@@ -50,10 +54,11 @@ func NewOpenAICompatibleClient(config OpenAICompatibleConfig) (*OpenAICompatible
 	}
 
 	return &OpenAICompatibleClient{
-		endpoint:   baseURL + "/chat/completions",
-		apiKey:     config.APIKey,
-		model:      config.Model,
-		httpClient: httpClient,
+		endpoint:    baseURL + "/chat/completions",
+		apiKey:      config.APIKey,
+		model:       config.Model,
+		httpClient:  httpClient,
+		retryPolicy: retry.Normalize(config.RetryPolicy),
 	}, nil
 }
 
@@ -83,6 +88,25 @@ func (client *OpenAICompatibleClient) Chat(
 		return nil, fmt.Errorf("marshal llm request: %w", err)
 	}
 
+	var response *ChatResponse
+	err = retry.Do(ctx, client.retryPolicy, func() error {
+		completed, attemptErr := client.sendChat(ctx, body)
+		if attemptErr != nil {
+			return attemptErr
+		}
+		response = completed
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return response, nil
+}
+
+func (client *OpenAICompatibleClient) sendChat(
+	ctx context.Context,
+	body []byte,
+) (*ChatResponse, error) {
 	httpRequest, err := http.NewRequestWithContext(ctx, http.MethodPost, client.endpoint, bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("create llm request: %w", err)
@@ -158,6 +182,11 @@ func (err *APIError) Error() string {
 		return fmt.Sprintf("llm API error: status=%d code=%s message=%s", err.StatusCode, err.Code, err.Message)
 	}
 	return fmt.Sprintf("llm API error: status=%d message=%s", err.StatusCode, err.Message)
+}
+
+// HTTPStatus 返回模型服务的 HTTP 状态码，供指数重试判断。
+func (err *APIError) HTTPStatus() int {
+	return err.StatusCode
 }
 
 func validateBaseURL(value string) error {

@@ -15,6 +15,7 @@ import (
 	"github.com/ecol/chat-agent/internal/config"
 	"github.com/ecol/chat-agent/internal/httpapi"
 	"github.com/ecol/chat-agent/internal/llm"
+	"github.com/ecol/chat-agent/internal/retry"
 	"github.com/ecol/chat-agent/internal/server"
 	"github.com/ecol/chat-agent/internal/session"
 	"github.com/ecol/chat-agent/internal/tools"
@@ -74,6 +75,11 @@ func newLLMClient(cfg config.LLMConfig) (llm.Client, error) {
 		Model:   cfg.Model,
 		HTTPClient: &http.Client{
 			Timeout: cfg.RequestTimeout,
+		},
+		RetryPolicy: retry.Policy{
+			MaxAttempts:     cfg.RetryMaxAttempts,
+			InitialInterval: cfg.RetryInitialInterval,
+			MaxInterval:     cfg.RetryMaxInterval,
 		},
 	})
 	if err != nil {

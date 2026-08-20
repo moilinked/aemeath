@@ -23,8 +23,10 @@
 - 组合 LLM、Session 和 Tools，并限制最大执行步数的 Agent
 - 支持工具错误回传、Token 汇总和会话持久化的 Agent Loop
 - 固定用户、bcrypt 密码校验与 Bearer JWT 路由保护
+- 受登录保护的 `POST /api/chat`、Agent 错误映射与聊天幂等
+- LLM 与天气请求对 429/5xx 等可恢复错误进行指数重试
 
-尚未实现 Chat API，因此当前服务还不能直接进行聊天。
+当前已提供受 JWT 保护的 `POST /api/chat`，尚未实现 Web UI。
 
 ## MVP 目标
 
@@ -163,15 +165,17 @@ Invoke-RestMethod http://localhost:8080/healthz
 GET /healthz
 ```
 
-### Chat API（待实现）
-
-计划提供：
+### Chat API
 
 ```text
 POST /api/chat
+Authorization: Bearer <access_token>
+Idempotency-Key: <unique-per-send>
 ```
 
-计划请求：
+该接口位于受保护的 `/api` 路由下，必须携带有效 Access Token 和 `Idempotency-Key`。前端应对每一次用户发送生成稳定键（例如 UUID），超时重试时复用同一把键，避免重复执行 Agent、重复消耗 Token。`GET /healthz` 和 `POST /api/auth/login` 保持公开。
+
+请求：
 
 ```json
 {
@@ -180,13 +184,15 @@ POST /api/chat
 }
 ```
 
-计划响应：
+成功响应：
 
 ```json
 {
   "message": "128 × 39 = 4992"
 }
 ```
+
+缺少 `session_id`、`message` 或合法 `Idempotency-Key` 时返回 `400`；未登录或 Token 无效时返回 `401`。同一用户复用相同键且请求内容一致时，直接返回首次结果；请求仍在处理中，或同一键被用于不同 `session_id`/`message`，返回 `409`。幂等记录保存在进程内存中，默认 24 小时。客户端断开导致的取消不会写入幂等缓存，允许随后用同一把键重新请求。
 
 ## 环境变量
 
@@ -203,6 +209,9 @@ POST /api/chat
 | `SERVER_SHUTDOWN_TIMEOUT` | `10s` | 优雅关闭超时 |
 | `LLM_PROVIDER` | `deepseek` | `openai` 或 `deepseek` |
 | `LLM_REQUEST_TIMEOUT` | `60s` | 单次 LLM 请求超时 |
+| `LLM_RETRY_MAX_ATTEMPTS` | `3` | LLM 可恢复错误的最大尝试次数，含首次请求 |
+| `LLM_RETRY_INITIAL_INTERVAL` | `200ms` | LLM 指数重试的初始间隔 |
+| `LLM_RETRY_MAX_INTERVAL` | `2s` | LLM 指数重试的最大间隔 |
 | `AGENT_MAX_STEPS` | `8` | 单次 Agent 运行允许的最大 LLM 决策次数 |
 | `AUTH_USERNAME` | 无 | 单用户登录名，必填 |
 | `AUTH_PASSWORD_HASH` | 无 | 登录密码的 bcrypt 哈希，必填；不得配置密码明文 |
@@ -256,14 +265,15 @@ go test -tags=integration -run "^TestDeepSeekConnectivity$" -count=1 ./internal/
 - [x] 实现 Agent 与最大执行步数
 - [x] 实现 LLM → Tool → Observation → LLM 的 Agent Loop
 - [x] 实现固定用户 JWT 登录与 API 路由保护
-- [ ] 实现 `POST /api/chat`
-- [ ] 添加请求校验、错误映射和 Agent 集成测试
+- [x] 实现 `POST /api/chat`
+- [x] 添加请求校验、错误映射和 Agent 集成测试
 
 ### 后续阶段
 
 - [ ] 使用数据库与 `UserStore` 替代临时环境变量单用户凭据
 - [ ] Web Chat UI
 - [ ] SSE 流式响应
+- [ ] SSE 支持客户端主动断开并取消本次 Chat，停止后续 LLM 与工具调用
 - [ ] PostgreSQL 或 Redis Session 持久化
 - [ ] 上下文裁剪和 Token 预算
 - [ ] Tracing 与 Evals

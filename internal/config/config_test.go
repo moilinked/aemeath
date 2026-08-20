@@ -21,6 +21,9 @@ func TestLoad(t *testing.T) {
 		readTimeout       string
 		llmProvider       string
 		llmRequestTimeout string
+		llmRetryAttempts  string
+		llmRetryInitial   string
+		llmRetryMax       string
 		agentMaxSteps     string
 		openAIAPIKey      string
 		openAIBaseURL     string
@@ -45,10 +48,13 @@ func TestLoad(t *testing.T) {
 			wantAddress: fmt.Sprintf(":%d", defaultServerPort),
 			wantTimeout: defaultReadTimeout,
 			wantLLM: LLMConfig{
-				Provider:       LLMProviderDeepSeek,
-				BaseURL:        defaultDeepSeekBaseURL,
-				Model:          defaultDeepSeekModel,
-				RequestTimeout: defaultLLMRequestTimeout,
+				Provider:             LLMProviderDeepSeek,
+				BaseURL:              defaultDeepSeekBaseURL,
+				Model:                defaultDeepSeekModel,
+				RequestTimeout:       defaultLLMRequestTimeout,
+				RetryMaxAttempts:     defaultLLMRetryAttempts,
+				RetryInitialInterval: defaultLLMRetryInitial,
+				RetryMaxInterval:     defaultLLMRetryMax,
 			},
 			wantAgent: AgentConfig{MaxSteps: defaultAgentMaxSteps},
 			wantAuth: AuthConfig{
@@ -66,6 +72,9 @@ func TestLoad(t *testing.T) {
 			readTimeout:       "20s",
 			llmProvider:       "OPENAI",
 			llmRequestTimeout: "45s",
+			llmRetryAttempts:  "4",
+			llmRetryInitial:   "100ms",
+			llmRetryMax:       "1s",
 			agentMaxSteps:     "12",
 			openAIAPIKey:      "secret-key",
 			openAIBaseURL:     "https://gateway.example.com/v1",
@@ -78,11 +87,14 @@ func TestLoad(t *testing.T) {
 			wantAddress:       "127.0.0.1:9090",
 			wantTimeout:       20 * time.Second,
 			wantLLM: LLMConfig{
-				Provider:       LLMProviderOpenAI,
-				BaseURL:        "https://gateway.example.com/v1",
-				APIKey:         "secret-key",
-				Model:          "chat-gpt-luna",
-				RequestTimeout: 45 * time.Second,
+				Provider:             LLMProviderOpenAI,
+				BaseURL:              "https://gateway.example.com/v1",
+				APIKey:               "secret-key",
+				Model:                "chat-gpt-luna",
+				RequestTimeout:       45 * time.Second,
+				RetryMaxAttempts:     4,
+				RetryInitialInterval: 100 * time.Millisecond,
+				RetryMaxInterval:     time.Second,
 			},
 			wantAgent: AgentConfig{MaxSteps: 12},
 			wantAuth: AuthConfig{
@@ -99,10 +111,13 @@ func TestLoad(t *testing.T) {
 			wantAddress: ":9091",
 			wantTimeout: defaultReadTimeout,
 			wantLLM: LLMConfig{
-				Provider:       LLMProviderDeepSeek,
-				BaseURL:        defaultDeepSeekBaseURL,
-				Model:          defaultDeepSeekModel,
-				RequestTimeout: defaultLLMRequestTimeout,
+				Provider:             LLMProviderDeepSeek,
+				BaseURL:              defaultDeepSeekBaseURL,
+				Model:                defaultDeepSeekModel,
+				RequestTimeout:       defaultLLMRequestTimeout,
+				RetryMaxAttempts:     defaultLLMRetryAttempts,
+				RetryInitialInterval: defaultLLMRetryInitial,
+				RetryMaxInterval:     defaultLLMRetryMax,
 			},
 			wantAgent: AgentConfig{MaxSteps: defaultAgentMaxSteps},
 			wantAuth: AuthConfig{
@@ -178,6 +193,27 @@ func TestLoad(t *testing.T) {
 			jwtIssuer: " ",
 			wantErr:   true,
 		},
+		{
+			name:             "rejects invalid LLM retry attempts",
+			llmRetryAttempts: "invalid",
+			wantErr:          true,
+		},
+		{
+			name:             "rejects non-positive LLM retry attempts",
+			llmRetryAttempts: "0",
+			wantErr:          true,
+		},
+		{
+			name:            "rejects invalid LLM retry interval",
+			llmRetryInitial: "invalid",
+			wantErr:         true,
+		},
+		{
+			name:            "rejects LLM retry max smaller than initial",
+			llmRetryInitial: "2s",
+			llmRetryMax:     "1s",
+			wantErr:         true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -187,6 +223,9 @@ func TestLoad(t *testing.T) {
 			t.Setenv("SERVER_READ_TIMEOUT", tt.readTimeout)
 			t.Setenv("LLM_PROVIDER", tt.llmProvider)
 			t.Setenv("LLM_REQUEST_TIMEOUT", tt.llmRequestTimeout)
+			t.Setenv("LLM_RETRY_MAX_ATTEMPTS", tt.llmRetryAttempts)
+			t.Setenv("LLM_RETRY_INITIAL_INTERVAL", tt.llmRetryInitial)
+			t.Setenv("LLM_RETRY_MAX_INTERVAL", tt.llmRetryMax)
 			t.Setenv("AGENT_MAX_STEPS", tt.agentMaxSteps)
 			t.Setenv("OPENAI_API_KEY", tt.openAIAPIKey)
 			t.Setenv("OPENAI_BASE_URL", tt.openAIBaseURL)

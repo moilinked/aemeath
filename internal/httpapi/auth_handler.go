@@ -39,26 +39,8 @@ type loginResponse struct {
 
 func login(service AuthService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !isJSONContentType(r.Header.Get("Content-Type")) {
-			writeAPIError(w, http.StatusUnsupportedMediaType, "Content-Type must be application/json")
-			return
-		}
-
-		r.Body = http.MaxBytesReader(w, r.Body, maxLoginRequestBodySize)
 		var request loginRequest
-		decoder := json.NewDecoder(r.Body)
-		decoder.DisallowUnknownFields()
-		if err := decoder.Decode(&request); err != nil {
-			var maxBytesError *http.MaxBytesError
-			if errors.As(err, &maxBytesError) {
-				writeAPIError(w, http.StatusRequestEntityTooLarge, "request body is too large")
-				return
-			}
-			writeAPIError(w, http.StatusBadRequest, "invalid JSON request body")
-			return
-		}
-		if err := ensureJSONBodyEnd(decoder); err != nil {
-			writeAPIError(w, http.StatusBadRequest, "invalid JSON request body")
+		if !decodeJSONBody(w, r, maxLoginRequestBodySize, &request) {
 			return
 		}
 
@@ -97,6 +79,31 @@ func me(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"username": identity.Username})
+}
+
+func decodeJSONBody(w http.ResponseWriter, r *http.Request, maxBytes int64, dest any) bool {
+	if !isJSONContentType(r.Header.Get("Content-Type")) {
+		writeAPIError(w, http.StatusUnsupportedMediaType, "Content-Type must be application/json")
+		return false
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxBytes)
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(dest); err != nil {
+		var maxBytesError *http.MaxBytesError
+		if errors.As(err, &maxBytesError) {
+			writeAPIError(w, http.StatusRequestEntityTooLarge, "request body is too large")
+			return false
+		}
+		writeAPIError(w, http.StatusBadRequest, "invalid JSON request body")
+		return false
+	}
+	if err := ensureJSONBodyEnd(decoder); err != nil {
+		writeAPIError(w, http.StatusBadRequest, "invalid JSON request body")
+		return false
+	}
+	return true
 }
 
 func isJSONContentType(value string) bool {

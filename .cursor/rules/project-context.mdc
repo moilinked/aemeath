@@ -14,7 +14,8 @@ alwaysApply: true
 - 已有 HTTP 服务、健康检查、环境配置、优雅关闭和基础测试。
 - LLM 层使用自定义 `Client` 接口和 OpenAI Chat Completions 兼容客户端。
 - 预期连接 `chat-gpt-luna` 网关模型及 DeepSeek V4。
-- 尚未实现 Agent Loop、Session、Tool Registry、Chat API 和 Web UI。
+- 已实现 Agent Loop、内存 Session、Tool Registry、JWT 登录和受保护的 Chat API。
+- 尚未实现 Web UI。
 
 # 架构边界
 

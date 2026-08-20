@@ -25,6 +25,9 @@ const (
 	defaultDeepSeekBaseURL   = "https://api.deepseek.com"
 	defaultDeepSeekModel     = "deepseek-v4-pro"
 	defaultAgentMaxSteps     = 8
+	defaultLLMRetryAttempts  = 3
+	defaultLLMRetryInitial   = 200 * time.Millisecond
+	defaultLLMRetryMax       = 2 * time.Second
 	defaultJWTAccessTTL      = 7 * 24 * time.Hour
 	defaultJWTIssuer         = "chat-agent"
 	minimumJWTSecretLength   = 32
@@ -43,11 +46,14 @@ const (
 // LLMConfig 包含当前模型供应商所需的连接配置。
 // APIKey 只从环境变量读取，禁止写入日志或提交到版本控制。
 type LLMConfig struct {
-	Provider       LLMProvider
-	BaseURL        string
-	APIKey         string
-	Model          string
-	RequestTimeout time.Duration
+	Provider             LLMProvider
+	BaseURL              string
+	APIKey               string
+	Model                string
+	RequestTimeout       time.Duration
+	RetryMaxAttempts     int
+	RetryInitialInterval time.Duration
+	RetryMaxInterval     time.Duration
 }
 
 // AgentConfig 包含 Agent 的执行边界配置。
@@ -175,7 +181,56 @@ func loadLLMConfig() (LLMConfig, error) {
 		return LLMConfig{}, fmt.Errorf("unsupported LLM_PROVIDER %q", provider)
 	}
 
+	if err := applyLLMRetryConfig(&cfg); err != nil {
+		return LLMConfig{}, err
+	}
+
 	return cfg, nil
+}
+
+func applyLLMRetryConfig(cfg *LLMConfig) error {
+	maxAttempts, err := positiveIntOrDefault("LLM_RETRY_MAX_ATTEMPTS", defaultLLMRetryAttempts)
+	if err != nil {
+		return err
+	}
+	initialInterval, err := durationGreaterThanZeroOrDefault(
+		"LLM_RETRY_INITIAL_INTERVAL",
+		defaultLLMRetryInitial,
+	)
+	if err != nil {
+		return err
+	}
+	maxInterval, err := durationGreaterThanZeroOrDefault(
+		"LLM_RETRY_MAX_INTERVAL",
+		defaultLLMRetryMax,
+	)
+	if err != nil {
+		return err
+	}
+	if maxInterval < initialInterval {
+		return errors.New("LLM_RETRY_MAX_INTERVAL must be greater than or equal to LLM_RETRY_INITIAL_INTERVAL")
+	}
+
+	cfg.RetryMaxAttempts = maxAttempts
+	cfg.RetryInitialInterval = initialInterval
+	cfg.RetryMaxInterval = maxInterval
+	return nil
+}
+
+func durationGreaterThanZeroOrDefault(name string, fallback time.Duration) (time.Duration, error) {
+	value := os.Getenv(name)
+	if value == "" {
+		return fallback, nil
+	}
+
+	parsed, err := time.ParseDuration(value)
+	if err != nil {
+		return 0, fmt.Errorf("parse %s: %w", name, err)
+	}
+	if parsed <= 0 {
+		return 0, fmt.Errorf("%s must be greater than zero", name)
+	}
+	return parsed, nil
 }
 
 func envOrDefault(name, fallback string) string {

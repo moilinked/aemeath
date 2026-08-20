@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/ecol/chat-agent/internal/llm"
+	"github.com/ecol/chat-agent/internal/retry"
 )
 
 const (
@@ -32,6 +33,11 @@ var (
 	ErrWeatherProvider = errors.New("weather provider error")
 
 	defaultWeatherHTTPClient = &http.Client{Timeout: defaultWeatherTimeout}
+	weatherRetryPolicy       = retry.Policy{
+		MaxAttempts:     3,
+		InitialInterval: 100 * time.Millisecond,
+		MaxInterval:     time.Second,
+	}
 )
 
 // WeatherTool 通过 Open-Meteo 查询地点的当前天气。
@@ -231,32 +237,34 @@ func (tool *WeatherTool) currentWeather(
 }
 
 func (tool *WeatherTool) getJSON(ctx context.Context, endpoint string, target any) error {
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
-	if err != nil {
-		return fmt.Errorf("%w: create request: %w", ErrWeatherProvider, err)
-	}
-	request.Header.Set("Accept", "application/json")
-	request.Header.Set("User-Agent", "chat-agent")
+	return retry.Do(ctx, weatherRetryPolicy, func() error {
+		request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+		if err != nil {
+			return fmt.Errorf("%w: create request: %w", ErrWeatherProvider, err)
+		}
+		request.Header.Set("Accept", "application/json")
+		request.Header.Set("User-Agent", "chat-agent")
 
-	httpClient := tool.httpClient
-	if httpClient == nil {
-		httpClient = defaultWeatherHTTPClient
-	}
-	response, err := httpClient.Do(request)
-	if err != nil {
-		return fmt.Errorf("%w: request failed: %w", ErrWeatherProvider, err)
-	}
-	body, err := readWeatherResponseBody(response.Body)
-	if err != nil {
-		return err
-	}
-	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
-		return decodeWeatherProviderError(response.StatusCode, body)
-	}
-	if err := json.Unmarshal(body, target); err != nil {
-		return fmt.Errorf("%w: decode response: %w", ErrWeatherProvider, err)
-	}
-	return nil
+		httpClient := tool.httpClient
+		if httpClient == nil {
+			httpClient = defaultWeatherHTTPClient
+		}
+		response, err := httpClient.Do(request)
+		if err != nil {
+			return fmt.Errorf("%w: request failed: %w", ErrWeatherProvider, err)
+		}
+		body, err := readWeatherResponseBody(response.Body)
+		if err != nil {
+			return err
+		}
+		if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+			return decodeWeatherProviderError(response.StatusCode, body)
+		}
+		if err := json.Unmarshal(body, target); err != nil {
+			return fmt.Errorf("%w: decode response: %w", ErrWeatherProvider, err)
+		}
+		return nil
+	})
 }
 
 func readWeatherResponseBody(body io.ReadCloser) ([]byte, error) {
@@ -280,14 +288,14 @@ func decodeWeatherProviderError(statusCode int, body []byte) error {
 		Reason string `json:"reason"`
 	}
 	if err := json.Unmarshal(body, &response); err == nil && response.Reason != "" {
-		return fmt.Errorf(
+		return retry.WithStatus(statusCode, fmt.Errorf(
 			"%w: status=%d reason=%s",
 			ErrWeatherProvider,
 			statusCode,
 			response.Reason,
-		)
+		))
 	}
-	return fmt.Errorf("%w: status=%d", ErrWeatherProvider, statusCode)
+	return retry.WithStatus(statusCode, fmt.Errorf("%w: status=%d", ErrWeatherProvider, statusCode))
 }
 
 func weatherCodeDescription(code int) string {
