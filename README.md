@@ -214,8 +214,8 @@ Idempotency-Key: <unique-per-send>
 | `LLM_RETRY_MAX_INTERVAL` | `2s` | LLM 指数重试的最大间隔 |
 | `AGENT_MAX_STEPS` | `8` | 单次 Agent 运行允许的最大 LLM 决策次数 |
 | `AUTH_USERNAME` | 无 | 单用户登录名，必填 |
-| `AUTH_PASSWORD_HASH` | 无 | 登录密码的 bcrypt 哈希，必填；不得配置密码明文 |
-| `JWT_SECRET` | 无 | HS256 签名密钥，必填且至少 32 字节 |
+| `AUTH_PASSWORD_HASH` | 无 | 登录密码的 bcrypt 哈希，必填；不得配置密码明文。`.env` 中必须用单引号包裹，否则 `$` 会被展开导致哈希失效 |
+| `JWT_SECRET` | 无 | HS256 签名密钥，必填 |
 | `JWT_ACCESS_TTL` | `168h` | Access Token 有效期（7 天） |
 | `JWT_ISSUER` | `chat-agent` | JWT issuer |
 | `OPENAI_API_KEY` | 无 | OpenAI 或兼容网关密钥 |

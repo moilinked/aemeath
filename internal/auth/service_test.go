@@ -25,11 +25,10 @@ func TestNewRejectsInvalidConfig(t *testing.T) {
 		config Config
 	}{
 		{
-			name: "short signing key",
+			name: "missing signing key",
 			config: Config{
 				Username:     testUsername,
 				PasswordHash: passwordHash,
-				SigningKey:   []byte("short"),
 				AccessTTL:    time.Hour,
 				Issuer:       "test",
 			},
@@ -82,6 +81,22 @@ func TestNewRejectsInvalidConfig(t *testing.T) {
 				t.Fatal("New() error = nil, want an error")
 			}
 		})
+	}
+}
+
+func TestNewAcceptsShortSigningKey(t *testing.T) {
+	service, err := New(Config{
+		Username:     testUsername,
+		PasswordHash: passwordHashForTest(t),
+		SigningKey:   []byte("short"),
+		AccessTTL:    time.Hour,
+		Issuer:       "test",
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	if service == nil {
+		t.Fatal("New() service is nil")
 	}
 }
 

@@ -141,6 +141,15 @@ func TestNewAuthService(t *testing.T) {
 				AccessTTL:    time.Hour,
 				Issuer:       "test-issuer",
 			},
+		},
+		{
+			name: "missing signing key",
+			config: config.AuthConfig{
+				Username:     "test-user",
+				PasswordHash: string(passwordHash),
+				AccessTTL:    time.Hour,
+				Issuer:       "test-issuer",
+			},
 			wantErr: true,
 		},
 		{

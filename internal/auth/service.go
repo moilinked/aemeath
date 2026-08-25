@@ -14,8 +14,6 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-const minimumSigningKeyLength = 32
-
 var (
 	// ErrInvalidCredentials 表示用户名或密码不正确。
 	ErrInvalidCredentials = errors.New("invalid credentials")
@@ -63,11 +61,8 @@ func New(config Config) (*Service, error) {
 	if _, err := bcrypt.Cost(config.PasswordHash); err != nil {
 		return nil, errors.New("auth password hash must be a valid bcrypt hash")
 	}
-	if len(config.SigningKey) < minimumSigningKeyLength {
-		return nil, fmt.Errorf(
-			"JWT signing key must be at least %d bytes",
-			minimumSigningKeyLength,
-		)
+	if strings.TrimSpace(string(config.SigningKey)) == "" {
+		return nil, errors.New("JWT signing key is required")
 	}
 	if config.AccessTTL <= 0 {
 		return nil, errors.New("JWT access TTL must be greater than zero")

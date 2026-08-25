@@ -30,7 +30,6 @@ const (
 	defaultLLMRetryMax       = 2 * time.Second
 	defaultJWTAccessTTL      = 7 * 24 * time.Hour
 	defaultJWTIssuer         = "chat-agent"
-	minimumJWTSecretLength   = 32
 )
 
 // LLMProvider 表示当前启用的模型供应商。
@@ -282,11 +281,8 @@ func loadAuthConfig() (AuthConfig, error) {
 	}
 
 	signingKey := os.Getenv("JWT_SECRET")
-	if len(signingKey) < minimumJWTSecretLength {
-		return AuthConfig{}, fmt.Errorf(
-			"JWT_SECRET must be at least %d bytes",
-			minimumJWTSecretLength,
-		)
+	if strings.TrimSpace(signingKey) == "" {
+		return AuthConfig{}, errors.New("JWT_SECRET is required")
 	}
 
 	accessTTL := defaultJWTAccessTTL
