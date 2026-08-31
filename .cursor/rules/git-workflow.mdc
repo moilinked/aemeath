@@ -11,6 +11,18 @@ alwaysApply: true
 - 只有获得用户明确确认后，才能暂存并执行 `git commit`。
 - 不自动 push，不跳过 Git hooks，不修改 Git 配置。
 
+# 提交提醒
+
+完成一个可测试的功能阶段后，或未提交改动已经偏大时，必须先暂停继续堆需求，向用户提醒该提交，并给出 Gitmoji commit message，等待确认后再 `git commit`。
+
+判定为“该提交”的情况：
+
+- 一个完整功能已可测试（例如新存储、新 API、认证改造）
+- 或新增/重构了独立包
+- 或未提交文件大约 8 个以上，或 diff 规模明显超过一次功能提交
+
+一次只建议一条（或按功能拆开的几条）commit message，不要在未确认时继续混入下一阶段改动。
+
 # Commit Message
 
 - 使用 `emoji type: summary`，例如：`🔧 chore: improve LLM environment configuration`。
