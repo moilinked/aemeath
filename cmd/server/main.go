@@ -9,15 +9,16 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/ecol/chat-agent/internal/agent"
 	"github.com/ecol/chat-agent/internal/auth"
 	"github.com/ecol/chat-agent/internal/config"
 	"github.com/ecol/chat-agent/internal/httpapi"
 	"github.com/ecol/chat-agent/internal/llm"
+	"github.com/ecol/chat-agent/internal/postgres"
 	"github.com/ecol/chat-agent/internal/retry"
 	"github.com/ecol/chat-agent/internal/server"
-	"github.com/ecol/chat-agent/internal/session"
 	"github.com/ecol/chat-agent/internal/tools"
 )
 
@@ -34,17 +35,35 @@ func run() error {
 		return err
 	}
 
+	startCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	pool, err := postgres.Open(startCtx, cfg.DatabaseURL)
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+
+	if err := postgres.Migrate(startCtx, pool); err != nil {
+		return fmt.Errorf("migrate postgres: %w", err)
+	}
+
+	userStore := postgres.NewUserStore(pool)
+	if err := userStore.Upsert(startCtx, cfg.Auth.Username, cfg.Auth.PasswordHash); err != nil {
+		return fmt.Errorf("bootstrap auth user: %w", err)
+	}
+
 	llmClient, err := newLLMClient(cfg.LLM)
 	if err != nil {
 		return err
 	}
 
-	chatAgent, err := newAgent(llmClient, cfg.Agent)
+	chatAgent, err := newAgent(llmClient, cfg.Agent, postgres.NewSessionStore(pool))
 	if err != nil {
 		return err
 	}
 
-	authService, err := newAuthService(cfg.Auth)
+	authService, err := newAuthService(cfg.Auth, userStore)
 	if err != nil {
 		return err
 	}
@@ -89,7 +108,11 @@ func newLLMClient(cfg config.LLMConfig) (llm.Client, error) {
 	return client, nil
 }
 
-func newAgent(llmClient llm.Client, cfg config.AgentConfig) (*agent.Agent, error) {
+func newAgent(
+	llmClient llm.Client,
+	cfg config.AgentConfig,
+	sessions agent.SessionStore,
+) (*agent.Agent, error) {
 	toolRegistry, err := tools.NewRegistry(
 		tools.NewCalculatorTool(),
 		tools.NewWeatherTool(nil),
@@ -100,7 +123,7 @@ func newAgent(llmClient llm.Client, cfg config.AgentConfig) (*agent.Agent, error
 
 	chatAgent, err := agent.New(agent.Config{
 		LLM:      llmClient,
-		Sessions: session.NewMemoryStore(),
+		Sessions: sessions,
 		Tools:    toolRegistry,
 		MaxSteps: cfg.MaxSteps,
 	})
@@ -110,14 +133,12 @@ func newAgent(llmClient llm.Client, cfg config.AgentConfig) (*agent.Agent, error
 	return chatAgent, nil
 }
 
-func newAuthService(cfg config.AuthConfig) (*auth.Service, error) {
-	// TODO: 接入用户数据库后，在此注入 UserStore，停止从配置装配单用户凭据。
+func newAuthService(cfg config.AuthConfig, users auth.UserStore) (*auth.Service, error) {
 	service, err := auth.New(auth.Config{
-		Username:     cfg.Username,
-		PasswordHash: []byte(cfg.PasswordHash),
-		SigningKey:   []byte(cfg.SigningKey),
-		AccessTTL:    cfg.AccessTTL,
-		Issuer:       cfg.Issuer,
+		Users:      users,
+		SigningKey: []byte(cfg.SigningKey),
+		AccessTTL:  cfg.AccessTTL,
+		Issuer:     cfg.Issuer,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create auth service: %w", err)

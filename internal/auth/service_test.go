@@ -19,7 +19,7 @@ var (
 )
 
 func TestNewRejectsInvalidConfig(t *testing.T) {
-	passwordHash := passwordHashForTest(t)
+	users := staticUsersForTest(t)
 	tests := []struct {
 		name   string
 		config Config
@@ -27,49 +27,35 @@ func TestNewRejectsInvalidConfig(t *testing.T) {
 		{
 			name: "missing signing key",
 			config: Config{
-				Username:     testUsername,
-				PasswordHash: passwordHash,
-				AccessTTL:    time.Hour,
-				Issuer:       "test",
+				Users:     users,
+				AccessTTL: time.Hour,
+				Issuer:    "test",
 			},
 		},
 		{
 			name: "non-positive TTL",
 			config: Config{
-				Username:     testUsername,
-				PasswordHash: passwordHash,
-				SigningKey:   testSigningKey,
-				AccessTTL:    0,
-				Issuer:       "test",
+				Users:      users,
+				SigningKey: testSigningKey,
+				AccessTTL:  0,
+				Issuer:     "test",
 			},
 		},
 		{
 			name: "blank issuer",
 			config: Config{
-				Username:     testUsername,
-				PasswordHash: passwordHash,
-				SigningKey:   testSigningKey,
-				AccessTTL:    time.Hour,
-				Issuer:       " ",
+				Users:      users,
+				SigningKey: testSigningKey,
+				AccessTTL:  time.Hour,
+				Issuer:     " ",
 			},
 		},
 		{
-			name: "missing username",
+			name: "missing user store",
 			config: Config{
-				PasswordHash: passwordHash,
-				SigningKey:   testSigningKey,
-				AccessTTL:    time.Hour,
-				Issuer:       "test",
-			},
-		},
-		{
-			name: "invalid password hash",
-			config: Config{
-				Username:     testUsername,
-				PasswordHash: []byte("invalid"),
-				SigningKey:   testSigningKey,
-				AccessTTL:    time.Hour,
-				Issuer:       "test",
+				SigningKey: testSigningKey,
+				AccessTTL:  time.Hour,
+				Issuer:     "test",
 			},
 		},
 	}
@@ -86,11 +72,10 @@ func TestNewRejectsInvalidConfig(t *testing.T) {
 
 func TestNewAcceptsShortSigningKey(t *testing.T) {
 	service, err := New(Config{
-		Username:     testUsername,
-		PasswordHash: passwordHashForTest(t),
-		SigningKey:   []byte("short"),
-		AccessTTL:    time.Hour,
-		Issuer:       "test",
+		Users:      staticUsersForTest(t),
+		SigningKey: []byte("short"),
+		AccessTTL:  time.Hour,
+		Issuer:     "test",
 	})
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
@@ -176,11 +161,10 @@ func TestVerifyRejectsInvalidTokens(t *testing.T) {
 	}
 
 	wrongKeyService, err := New(Config{
-		Username:     testUsername,
-		PasswordHash: passwordHashForTest(t),
-		SigningKey:   []byte("abcdef0123456789abcdef0123456789"),
-		AccessTTL:    time.Hour,
-		Issuer:       "test-issuer",
+		Users:      staticUsersForTest(t),
+		SigningKey: []byte("abcdef0123456789abcdef0123456789"),
+		AccessTTL:  time.Hour,
+		Issuer:     "test-issuer",
 	})
 	if err != nil {
 		t.Fatalf("New() wrong key service error = %v", err)
@@ -289,17 +273,26 @@ func newTestService(t *testing.T) *Service {
 	t.Helper()
 
 	service, err := New(Config{
-		Username:     testUsername,
-		PasswordHash: passwordHashForTest(t),
-		SigningKey:   testSigningKey,
-		AccessTTL:    time.Hour,
-		Issuer:       "test-issuer",
+		Users:      staticUsersForTest(t),
+		SigningKey: testSigningKey,
+		AccessTTL:  time.Hour,
+		Issuer:     "test-issuer",
 	})
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
 	service.now = func() time.Time { return testNow }
 	return service
+}
+
+func staticUsersForTest(t *testing.T) UserStore {
+	t.Helper()
+	return StaticUserStore{
+		User: User{
+			Username:     testUsername,
+			PasswordHash: passwordHashForTest(t),
+		},
+	}
 }
 
 func signedToken(

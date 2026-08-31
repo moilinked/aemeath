@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strings"
 
@@ -20,8 +21,13 @@ func requireBearer(service AuthService) func(http.Handler) http.Handler {
 			}
 
 			identity, err := service.Verify(r.Context(), tokenValue)
-			if err != nil || strings.TrimSpace(identity.Username) == "" {
+			if errors.Is(err, auth.ErrInvalidToken) ||
+				(err == nil && strings.TrimSpace(identity.Username) == "") {
 				writeUnauthorized(w, "valid Bearer token required")
+				return
+			}
+			if err != nil {
+				writeAPIError(w, http.StatusInternalServerError, "authentication failed")
 				return
 			}
 

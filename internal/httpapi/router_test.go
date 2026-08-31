@@ -127,11 +127,15 @@ func newHTTPTestAuth(t *testing.T) *auth.Service {
 		t.Fatalf("bcrypt.GenerateFromPassword() error = %v", err)
 	}
 	service, err := auth.New(auth.Config{
-		Username:     testHTTPUsername,
-		PasswordHash: passwordHash,
-		SigningKey:   []byte("0123456789abcdef0123456789abcdef"),
-		AccessTTL:    time.Hour,
-		Issuer:       "test-issuer",
+		Users: auth.StaticUserStore{
+			User: auth.User{
+				Username:     testHTTPUsername,
+				PasswordHash: passwordHash,
+			},
+		},
+		SigningKey: []byte("0123456789abcdef0123456789abcdef"),
+		AccessTTL:  time.Hour,
+		Issuer:     "test-issuer",
 	})
 	if err != nil {
 		t.Fatalf("auth.New() error = %v", err)

@@ -1,4 +1,4 @@
-// Package auth 提供固定用户认证与 JWT Access Token 管理。
+// Package auth 提供用户认证与 JWT Access Token 管理。
 package auth
 
 import (
@@ -21,14 +21,12 @@ var (
 	ErrInvalidToken = errors.New("invalid access token")
 )
 
-// TODO: 接入用户数据库后，将 Username 和 PasswordHash 替换为 UserStore 依赖。
-// Config 定义临时单用户凭据与 JWT 参数。
+// Config 定义 UserStore 与 JWT 参数。
 type Config struct {
-	Username     string
-	PasswordHash []byte
-	SigningKey   []byte
-	AccessTTL    time.Duration
-	Issuer       string
+	Users      UserStore
+	SigningKey []byte
+	AccessTTL  time.Duration
+	Issuer     string
 }
 
 // Identity 是 JWT 验证后得到的用户身份。
@@ -42,24 +40,20 @@ type AccessToken struct {
 	ExpiresAt time.Time
 }
 
-// Service 校验固定用户密码并签发、验证 JWT。
+// Service 通过 UserStore 校验密码并签发、验证 JWT。
 type Service struct {
-	username     string
-	passwordHash []byte
-	signingKey   []byte
-	accessTTL    time.Duration
-	issuer       string
-	now          func() time.Time
+	users      UserStore
+	dummyHash  []byte
+	signingKey []byte
+	accessTTL  time.Duration
+	issuer     string
+	now        func() time.Time
 }
 
 // New 创建认证服务并校验 JWT 安全参数。
 func New(config Config) (*Service, error) {
-	username := strings.TrimSpace(config.Username)
-	if username == "" {
-		return nil, errors.New("auth username is required")
-	}
-	if _, err := bcrypt.Cost(config.PasswordHash); err != nil {
-		return nil, errors.New("auth password hash must be a valid bcrypt hash")
+	if config.Users == nil {
+		return nil, errors.New("auth user store is required")
 	}
 	if strings.TrimSpace(string(config.SigningKey)) == "" {
 		return nil, errors.New("JWT signing key is required")
@@ -72,17 +66,25 @@ func New(config Config) (*Service, error) {
 		return nil, errors.New("JWT issuer is required")
 	}
 
+	dummyHash, err := bcrypt.GenerateFromPassword(
+		[]byte("invalid-dummy-password"),
+		bcrypt.MinCost,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("generate dummy password hash: %w", err)
+	}
+
 	return &Service{
-		username:     username,
-		passwordHash: append([]byte(nil), config.PasswordHash...),
-		signingKey:   append([]byte(nil), config.SigningKey...),
-		accessTTL:    config.AccessTTL,
-		issuer:       issuer,
-		now:          time.Now,
+		users:      config.Users,
+		dummyHash:  dummyHash,
+		signingKey: append([]byte(nil), config.SigningKey...),
+		accessTTL:  config.AccessTTL,
+		issuer:     issuer,
+		now:        time.Now,
 	}, nil
 }
 
-// Authenticate 校验固定用户凭据并签发 Access Token。
+// Authenticate 按用户名查询密码哈希并签发 Access Token。
 func (service *Service) Authenticate(
 	ctx context.Context,
 	username string,
@@ -92,13 +94,17 @@ func (service *Service) Authenticate(
 		return nil, err
 	}
 
-	// TODO: 支持多用户时，通过 UserStore 按 username 查询密码哈希；
-	// 未知用户仍需使用固定的 dummy hash 执行 bcrypt 比较，避免用户枚举时序差异。
-	passwordErr := bcrypt.CompareHashAndPassword(
-		service.passwordHash,
-		[]byte(password),
-	)
-	if username != service.username || passwordErr != nil {
+	user, lookupErr := service.users.FindByUsername(ctx, strings.TrimSpace(username))
+	if lookupErr != nil && !errors.Is(lookupErr, ErrUserNotFound) {
+		return nil, fmt.Errorf("lookup user: %w", lookupErr)
+	}
+
+	passwordHash := service.dummyHash
+	if lookupErr == nil {
+		passwordHash = user.PasswordHash
+	}
+	passwordErr := bcrypt.CompareHashAndPassword(passwordHash, []byte(password))
+	if lookupErr != nil || passwordErr != nil {
 		return nil, ErrInvalidCredentials
 	}
 	if err := ctx.Err(); err != nil {
@@ -114,7 +120,7 @@ func (service *Service) Authenticate(
 
 	claims := jwt.RegisteredClaims{
 		Issuer:    service.issuer,
-		Subject:   service.username,
+		Subject:   user.Username,
 		ExpiresAt: jwt.NewNumericDate(expiresAt),
 		IssuedAt:  jwt.NewNumericDate(now),
 		ID:        tokenID,

@@ -60,8 +60,7 @@ type AgentConfig struct {
 	MaxSteps int
 }
 
-// TODO: 用户信息迁移到数据库后，从 AuthConfig 移除 Username 和 PasswordHash。
-// AuthConfig 包含临时单用户凭据与 JWT Access Token 配置。
+// AuthConfig 包含启动时写入数据库的引导用户与 JWT Access Token 配置。
 // PasswordHash 和 SigningKey 只从环境变量读取，禁止写入日志或提交到版本控制。
 type AuthConfig struct {
 	Username     string
@@ -71,9 +70,10 @@ type AuthConfig struct {
 	Issuer       string
 }
 
-// Config 包含 HTTP 服务、LLM、Agent 和认证配置。
+// Config 包含 HTTP 服务、数据库、LLM、Agent 和认证配置。
 type Config struct {
 	Address           string
+	DatabaseURL       string
 	ReadHeaderTimeout time.Duration
 	ReadTimeout       time.Duration
 	WriteTimeout      time.Duration
@@ -107,9 +107,14 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	databaseURL, err := loadDatabaseURL()
+	if err != nil {
+		return Config{}, err
+	}
 
 	cfg := Config{
 		Address:           address,
+		DatabaseURL:       databaseURL,
 		ReadHeaderTimeout: defaultReadHeaderTimeout,
 		ReadTimeout:       defaultReadTimeout,
 		WriteTimeout:      defaultWriteTimeout,
@@ -268,6 +273,14 @@ func loadServerAddress() (string, error) {
 		return "", errors.New("SERVER_PORT must not exceed 65535")
 	}
 	return fmt.Sprintf(":%d", port), nil
+}
+
+func loadDatabaseURL() (string, error) {
+	databaseURL := strings.TrimSpace(os.Getenv("DATABASE_URL"))
+	if databaseURL == "" {
+		return "", errors.New("DATABASE_URL is required")
+	}
+	return databaseURL, nil
 }
 
 func loadAuthConfig() (AuthConfig, error) {

@@ -11,6 +11,7 @@ const (
 	testAuthUsername     = "test-user"
 	testAuthPasswordHash = "test-bcrypt-hash"
 	testJWTSecret        = "0123456789abcdef0123456789abcdef"
+	testDatabaseURL      = "postgres://chat_agent:chat_agent@127.0.0.1:5432/chat_agent?sslmode=disable"
 )
 
 func TestLoad(t *testing.T) {
@@ -36,6 +37,8 @@ func TestLoad(t *testing.T) {
 		jwtAccessTTL      string
 		jwtIssuer         string
 		missingJWTSecret  bool
+		databaseURL       string
+		missingDatabase   bool
 		wantAddress       string
 		wantTimeout       time.Duration
 		wantLLM           LLMConfig
@@ -174,6 +177,11 @@ func TestLoad(t *testing.T) {
 			wantErr:          true,
 		},
 		{
+			name:            "rejects missing DATABASE_URL",
+			missingDatabase: true,
+			wantErr:         true,
+		},
+		{
 			name:        "accepts short JWT secret",
 			jwtSecret:   "short",
 			wantAddress: fmt.Sprintf(":%d", defaultServerPort),
@@ -277,6 +285,14 @@ func TestLoad(t *testing.T) {
 			t.Setenv("JWT_SECRET", signingKey)
 			t.Setenv("JWT_ACCESS_TTL", tt.jwtAccessTTL)
 			t.Setenv("JWT_ISSUER", tt.jwtIssuer)
+			databaseURL := testDatabaseURL
+			if tt.databaseURL != "" {
+				databaseURL = tt.databaseURL
+			}
+			if tt.missingDatabase {
+				databaseURL = ""
+			}
+			t.Setenv("DATABASE_URL", databaseURL)
 
 			cfg, err := Load()
 			if tt.wantErr {
@@ -293,6 +309,12 @@ func TestLoad(t *testing.T) {
 			}
 			if err != nil {
 				t.Fatalf("Load() error = %v", err)
+			}
+			if cfg.DatabaseURL != testDatabaseURL && tt.databaseURL == "" {
+				t.Errorf("DatabaseURL = %q, want %q", cfg.DatabaseURL, testDatabaseURL)
+			}
+			if tt.databaseURL != "" && cfg.DatabaseURL != tt.databaseURL {
+				t.Errorf("DatabaseURL = %q, want %q", cfg.DatabaseURL, tt.databaseURL)
 			}
 			if cfg.Address != tt.wantAddress {
 				t.Errorf("Address = %q, want %q", cfg.Address, tt.wantAddress)

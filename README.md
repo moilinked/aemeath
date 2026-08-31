@@ -16,13 +16,13 @@
 - 工具调用、DeepSeek 思考内容和 Token Usage 数据结构
 - 配置与 LLM Client 单元测试
 - 版本受控、供应商无关的默认 System Prompt
-- `SessionStore` 接口与并发安全的内存会话存储
+- `SessionStore` 接口、内存实现与 PostgreSQL 持久化
 - `Tool` 接口与并发安全、顺序稳定的 Tool Registry
 - 支持基础四则运算、括号和科学计数法的 Calculator Tool
 - 使用 Open-Meteo、无需 API Key 的 Weather Tool
 - 组合 LLM、Session 和 Tools，并限制最大执行步数的 Agent
 - 支持工具错误回传、Token 汇总和会话持久化的 Agent Loop
-- 固定用户、bcrypt 密码校验与 Bearer JWT 路由保护
+- PostgreSQL 用户存储、bcrypt 密码校验与 Bearer JWT 路由保护
 - 受登录保护的 `POST /api/chat`、Agent 错误映射与聊天幂等
 - LLM 与天气请求对 429/5xx 等可恢复错误进行指数重试
 
@@ -38,7 +38,7 @@
 - 带最大执行步数的 Agent Loop
 - JSON 格式的 Chat HTTP API
 
-数据库、Redis、RAG、MCP、长期记忆和 Multi-Agent 不属于第一阶段范围。
+数据库以外的 Redis、RAG、MCP、长期记忆和 Multi-Agent 不属于当前范围。
 
 ## 目标架构
 
@@ -68,7 +68,8 @@ Agent Runtime
 - `httpapi` 只负责 HTTP 请求、响应和错误映射。
 - `agent` 负责编排 Prompt、Session、LLM 和 Tools。
 - `llm` 隔离具体模型供应商协议。
-- `session` 负责对话历史，MVP 阶段使用并发安全的内存存储。
+- `session` 负责对话历史；生产使用 PostgreSQL，测试仍可使用内存存储。
+- `postgres` 负责连接池、迁移、UserStore 与 SessionStore 实现。
 - `tools` 负责工具契约、注册和执行。
 - `config` 统一加载环境配置，业务包不直接读取 `.env`。
 
@@ -88,9 +89,13 @@ chat-agent/
 │   │   ├── client.go
 │   │   ├── openai_compatible.go
 │   │   └── types.go
+│   ├── postgres/
 │   ├── session/
 │   ├── tools/
 │   └── server/
+├── docker-compose.yml
+├── docs/
+│   └── deploy-postgres-linux.md
 ├── .env.example
 ├── go.mod
 └── README.md
@@ -103,6 +108,7 @@ chat-agent/
 ### 1. 准备环境
 
 - Go 1.25 或兼容版本
+- 可远程访问的 PostgreSQL 16（Linux 部署见 [docs/deploy-postgres-linux.md](docs/deploy-postgres-linux.md)）
 - OpenAI 兼容网关或 DeepSeek API Key
 
 ### 2. 创建本地配置
@@ -111,7 +117,7 @@ chat-agent/
 Copy-Item .env.example .env
 ```
 
-在 `.env` 中填写当前供应商对应的 API Key。`.env` 已被 Git 忽略，禁止将真实密钥写入 `.env.example`。
+在 `.env` 中填写当前供应商对应的 API Key，并将 `DATABASE_URL` 改为 Linux 服务器上的 PostgreSQL 连接串（不要使用 `127.0.0.1`）。`.env` 已被 Git 忽略，禁止将真实密钥写入 `.env.example`。服务启动时会执行迁移，并用 `AUTH_USERNAME` / `AUTH_PASSWORD_HASH` 引导写入 `users` 表。登录与 Session 均读写远程数据库。
 
 ### 3. 选择模型
 
@@ -213,8 +219,9 @@ Idempotency-Key: <unique-per-send>
 | `LLM_RETRY_INITIAL_INTERVAL` | `200ms` | LLM 指数重试的初始间隔 |
 | `LLM_RETRY_MAX_INTERVAL` | `2s` | LLM 指数重试的最大间隔 |
 | `AGENT_MAX_STEPS` | `8` | 单次 Agent 运行允许的最大 LLM 决策次数 |
-| `AUTH_USERNAME` | 无 | 单用户登录名，必填 |
-| `AUTH_PASSWORD_HASH` | 无 | 登录密码的 bcrypt 哈希，必填；不得配置密码明文。`.env` 中必须用单引号包裹，否则 `$` 会被展开导致哈希失效 |
+| `DATABASE_URL` | 无 | 远程 PostgreSQL 连接串，必填；格式见 `docs/deploy-postgres-linux.md` |
+| `AUTH_USERNAME` | 无 | 启动时写入数据库的引导用户名，必填 |
+| `AUTH_PASSWORD_HASH` | 无 | 引导用户的 bcrypt 哈希，必填；不得配置密码明文。`.env` 中必须用单引号包裹，否则 `$` 会被展开导致哈希失效 |
 | `JWT_SECRET` | 无 | HS256 签名密钥，必填 |
 | `JWT_ACCESS_TTL` | `168h` | Access Token 有效期（7 天） |
 | `JWT_ISSUER` | `chat-agent` | JWT issuer |
@@ -232,6 +239,13 @@ gofmt -w ./cmd ./internal
 go vet ./...
 go test -count=1 ./...
 go build ./cmd/server
+```
+
+PostgreSQL 用户与 Session 存储测试默认跳过。应对准独立测试库，不要使用生产数据库：
+
+```powershell
+$env:TEST_DATABASE_URL = "postgres://chat_agent:chat_agent@127.0.0.1:5432/chat_agent?sslmode=disable"
+go test -count=1 ./internal/postgres
 ```
 
 真实 DeepSeek 最小连通性测试默认不会随单元测试运行。配置 `.env` 后手动执行：
@@ -270,11 +284,11 @@ go test -tags=integration -run "^TestDeepSeekConnectivity$" -count=1 ./internal/
 
 ### 后续阶段
 
-- [ ] 使用数据库与 `UserStore` 替代临时环境变量单用户凭据
-- [ ] Web Chat UI
+- [x] 使用数据库与 `UserStore` 替代临时环境变量单用户凭据
+- [x] Web Chat UI
 - [ ] SSE 流式响应
 - [ ] SSE 支持客户端主动断开并取消本次 Chat，停止后续 LLM 与工具调用
-- [ ] PostgreSQL 或 Redis Session 持久化
+- [x] PostgreSQL Session 持久化
 - [ ] 上下文裁剪和 Token 预算
 - [ ] Tracing 与 Evals
 - [ ] RAG 与搜索工具

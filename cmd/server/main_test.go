@@ -5,8 +5,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ecol/chat-agent/internal/auth"
 	"github.com/ecol/chat-agent/internal/config"
 	"github.com/ecol/chat-agent/internal/llm"
+	"github.com/ecol/chat-agent/internal/session"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -95,7 +97,11 @@ func TestNewAgent(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			created, err := newAgent(test.client, config.AgentConfig{MaxSteps: test.maxSteps})
+			created, err := newAgent(
+				test.client,
+				config.AgentConfig{MaxSteps: test.maxSteps},
+				session.NewMemoryStore(),
+			)
 			if test.wantErr {
 				if err == nil {
 					t.Fatal("newAgent() error = nil, want an error")
@@ -125,58 +131,67 @@ func TestNewAuthService(t *testing.T) {
 		{
 			name: "valid configuration",
 			config: config.AuthConfig{
-				Username:     "test-user",
-				PasswordHash: string(passwordHash),
-				SigningKey:   "0123456789abcdef0123456789abcdef",
-				AccessTTL:    time.Hour,
-				Issuer:       "test-issuer",
+				SigningKey: "0123456789abcdef0123456789abcdef",
+				AccessTTL:  time.Hour,
+				Issuer:     "test-issuer",
 			},
 		},
 		{
 			name: "short signing key",
 			config: config.AuthConfig{
-				Username:     "test-user",
-				PasswordHash: string(passwordHash),
-				SigningKey:   "short",
-				AccessTTL:    time.Hour,
-				Issuer:       "test-issuer",
+				SigningKey: "short",
+				AccessTTL:  time.Hour,
+				Issuer:     "test-issuer",
 			},
 		},
 		{
 			name: "missing signing key",
 			config: config.AuthConfig{
-				Username:     "test-user",
-				PasswordHash: string(passwordHash),
-				AccessTTL:    time.Hour,
-				Issuer:       "test-issuer",
+				AccessTTL: time.Hour,
+				Issuer:    "test-issuer",
 			},
 			wantErr: true,
 		},
 		{
 			name: "invalid TTL",
 			config: config.AuthConfig{
-				Username:     "test-user",
-				PasswordHash: string(passwordHash),
-				SigningKey:   "0123456789abcdef0123456789abcdef",
-				Issuer:       "test-issuer",
+				SigningKey: "0123456789abcdef0123456789abcdef",
+				Issuer:     "test-issuer",
 			},
 			wantErr: true,
 		},
 		{
 			name: "missing issuer",
 			config: config.AuthConfig{
-				Username:     "test-user",
-				PasswordHash: string(passwordHash),
-				SigningKey:   "0123456789abcdef0123456789abcdef",
-				AccessTTL:    time.Hour,
+				SigningKey: "0123456789abcdef0123456789abcdef",
+				AccessTTL:  time.Hour,
+			},
+			wantErr: true,
+		},
+		{
+			name: "missing user store",
+			config: config.AuthConfig{
+				SigningKey: "0123456789abcdef0123456789abcdef",
+				AccessTTL:  time.Hour,
+				Issuer:     "test-issuer",
 			},
 			wantErr: true,
 		},
 	}
 
+	users := auth.StaticUserStore{
+		User: auth.User{
+			Username:     "test-user",
+			PasswordHash: passwordHash,
+		},
+	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			_, err := newAuthService(test.config)
+			var store auth.UserStore
+			if test.name != "missing user store" {
+				store = users
+			}
+			_, err := newAuthService(test.config, store)
 			if test.wantErr && err == nil {
 				t.Fatal("newAuthService() error = nil, want an error")
 			}
