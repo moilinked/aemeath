@@ -109,13 +109,13 @@ sudo -u postgres psql -d chat_agent -c '\dt'
 
 ## 7. 常见问题
 
-| 现象 | 处理 |
-| --- | --- |
-| `connection refused` | 检查 `listen_addresses`、进程是否监听 `0.0.0.0:5432`、安全组 / UFW |
-| `no pg_hba.conf entry` | 应用出口 IP 与 `pg_hba.conf` 中的 `APP_HOST_IP` 不一致（注意 NAT） |
-| `password authentication failed` | 用户密码与 `DATABASE_URL` 不一致，或仍在用 `postgres` 用户 |
-| `permission denied for schema public` | 补做第 2 步的 `GRANT ALL ON SCHEMA public` |
-| 本机能 SSH 但连不上 5432 | SSH 通不代表数据库端口通，需要单独放行 5432 |
+| 现象                                  | 处理                                                               |
+| ------------------------------------- | ------------------------------------------------------------------ |
+| `connection refused`                  | 检查 `listen_addresses`、进程是否监听 `0.0.0.0:5432`、安全组 / UFW |
+| `no pg_hba.conf entry`                | 应用出口 IP 与 `pg_hba.conf` 中的 `APP_HOST_IP` 不一致（注意 NAT） |
+| `password authentication failed`      | 用户密码与 `DATABASE_URL` 不一致，或仍在用 `postgres` 用户         |
+| `permission denied for schema public` | 补做第 2 步的 `GRANT ALL ON SCHEMA public`                         |
+| 本机能 SSH 但连不上 5432              | SSH 通不代表数据库端口通，需要单独放行 5432                        |
 
 查看监听：
 

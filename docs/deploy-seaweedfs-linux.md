@@ -10,12 +10,12 @@
 
 单机使用 `weed server -filer -s3`，同一进程内启动：
 
-| 组件 | 本机端口 | 用途 |
-| --- | --- | --- |
-| Master | `9333` | 集群元数据，仅本机访问 |
-| Volume | `8080` | 实际文件块，仅本机访问 |
-| Filer | `8888` | 路径式文件，如 `/notes/a.md`、`/images/a.png` |
-| S3 | `8333` | 兼容 S3 API，便于 SDK / 预签名 URL |
+| 组件   | 本机端口 | 用途                                          |
+| ------ | -------- | --------------------------------------------- |
+| Master | `9333`   | 集群元数据，仅本机访问                        |
+| Volume | `8080`   | 实际文件块，仅本机访问                        |
+| Filer  | `8888`   | 路径式文件，如 `/notes/a.md`、`/images/a.png` |
+| S3     | `8333`   | 兼容 S3 API，便于 SDK / 预签名 URL            |
 
 起步推荐走 **Filer HTTP**。以后要用 AWS SDK 时再开 S3。
 
@@ -151,14 +151,14 @@ sudo systemctl status seaweedfs --no-pager
 
 确认服务为 `active (running)`。
 
-| 参数 | 作用 |
-| --- | --- |
-| `-ip.bind=127.0.0.1` | 只监听本机，由 Nginx 对外 |
-| `-dir` | 数据目录 |
+| 参数                             | 作用                                                      |
+| -------------------------------- | --------------------------------------------------------- |
+| `-ip.bind=127.0.0.1`             | 只监听本机，由 Nginx 对外                                 |
+| `-dir`                           | 数据目录                                                  |
 | `-master.volumeSizeLimitMB=1024` | 单 Volume 1 GB。默认约 30 GB，小磁盘容易装不下多个 Volume |
-| `-volume.max=0` | 按剩余磁盘自动创建 Volume |
-| `-filer` | 启用路径式文件接口 |
-| `-s3.config` | S3 身份配置 |
+| `-volume.max=0`                  | 按剩余磁盘自动创建 Volume                                 |
+| `-filer`                         | 启用路径式文件接口                                        |
+| `-s3.config`                     | S3 身份配置                                               |
 
 查看日志：
 
@@ -287,14 +287,14 @@ sudo systemctl start seaweedfs
 
 ## 11. 常见问题
 
-| 现象 | 处理 |
-| --- | --- |
-| `PROTOCOL_ERROR` / GitHub 下载到 90% 失败 | 本机下载后 `scp`，或 HTTP/1.1 + 镜像 |
-| `tar: This does not look like a tar archive` | 下到的是错误页，检查文件大小后重下 |
-| 服务启动后端口不在 `127.0.0.1` | 确认 `-ip.bind=127.0.0.1` |
-| 磁盘很快写满 / Volume 创建失败 | 减小 `-master.volumeSizeLimitMB`，例如 `512` |
-| 公网能直接打开 `8888` | 安全组未收紧，或 systemd 未绑定本机 |
-| S3 匿名可读写 | 未配置 `-s3.config`，补密钥后重启 |
+| 现象                                         | 处理                                         |
+| -------------------------------------------- | -------------------------------------------- |
+| `PROTOCOL_ERROR` / GitHub 下载到 90% 失败    | 本机下载后 `scp`，或 HTTP/1.1 + 镜像         |
+| `tar: This does not look like a tar archive` | 下到的是错误页，检查文件大小后重下           |
+| 服务启动后端口不在 `127.0.0.1`               | 确认 `-ip.bind=127.0.0.1`                    |
+| 磁盘很快写满 / Volume 创建失败               | 减小 `-master.volumeSizeLimitMB`，例如 `512` |
+| 公网能直接打开 `8888`                        | 安全组未收紧，或 systemd 未绑定本机          |
+| S3 匿名可读写                                | 未配置 `-s3.config`，补密钥后重启            |
 
 查看监听地址：
 
