@@ -11,11 +11,16 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-const testUsername = "test-user"
+const (
+	testUsername = "test-user"
+	testUserID   = "test-user-id"
+)
 
 var (
-	testSigningKey = []byte("0123456789abcdef0123456789abcdef")
-	testNow        = time.Date(2026, time.August, 20, 8, 0, 0, 0, time.UTC)
+	testSigningKey    = []byte("0123456789abcdef0123456789abcdef")
+	testNow           = time.Date(2026, time.August, 20, 8, 0, 0, 0, time.UTC)
+	testUserCreatedAt = time.Date(2026, time.August, 1, 0, 0, 0, 0, time.UTC)
+	testUserUpdatedAt = time.Date(2026, time.August, 2, 0, 0, 0, 0, time.UTC)
 )
 
 func TestNewRejectsInvalidConfig(t *testing.T) {
@@ -109,6 +114,15 @@ func TestAuthenticateAndVerify(t *testing.T) {
 	}
 	if identity.Username != testUsername {
 		t.Fatalf("Verify() username = %q, want %q", identity.Username, testUsername)
+	}
+	if identity.ID != testUserID {
+		t.Fatalf("Verify() id = %q, want %q", identity.ID, testUserID)
+	}
+	if !identity.CreatedAt.Equal(testUserCreatedAt) {
+		t.Fatalf("Verify() created_at = %s, want %s", identity.CreatedAt, testUserCreatedAt)
+	}
+	if !identity.UpdatedAt.Equal(testUserUpdatedAt) {
+		t.Fatalf("Verify() updated_at = %s, want %s", identity.UpdatedAt, testUserUpdatedAt)
 	}
 }
 
@@ -289,8 +303,11 @@ func staticUsersForTest(t *testing.T) UserStore {
 	t.Helper()
 	return StaticUserStore{
 		User: User{
+			ID:           testUserID,
 			Username:     testUsername,
 			PasswordHash: passwordHashForTest(t),
+			CreatedAt:    testUserCreatedAt,
+			UpdatedAt:    testUserUpdatedAt,
 		},
 	}
 }

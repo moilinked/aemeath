@@ -4,15 +4,19 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"time"
 )
 
 // ErrUserNotFound 表示用户名在存储中不存在。
 var ErrUserNotFound = errors.New("user not found")
 
-// User 是认证所需的最小用户记录。
+// User 是认证与资料查询所需的用户记录。PasswordHash 只用于校验，不得进入 HTTP 响应。
 type User struct {
+	ID           string
 	Username     string
 	PasswordHash []byte
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
 }
 
 // UserStore 按用户名查询凭据。未知用户必须返回 ErrUserNotFound。
@@ -37,7 +41,10 @@ func (store StaticUserStore) FindByUsername(
 		return User{}, ErrUserNotFound
 	}
 	return User{
+		ID:           store.User.ID,
 		Username:     store.User.Username,
 		PasswordHash: append([]byte(nil), store.User.PasswordHash...),
+		CreatedAt:    store.User.CreatedAt,
+		UpdatedAt:    store.User.UpdatedAt,
 	}, nil
 }

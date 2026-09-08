@@ -60,5 +60,10 @@ func (service *Service) Verify(
 	if err := ctx.Err(); err != nil {
 		return Identity{}, err
 	}
-	return Identity{Username: user.Username}, nil
+	return Identity{
+		ID:        user.ID,
+		Username:  user.Username,
+		CreatedAt: user.CreatedAt,
+		UpdatedAt: user.UpdatedAt,
+	}, nil
 }

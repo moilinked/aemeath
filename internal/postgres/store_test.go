@@ -45,8 +45,15 @@ func TestUserAndSessionStore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FindByUsername() error = %v", err)
 	}
+	wantID := fmt.Sprintf("id-%s", t.Name())
+	if found.ID != wantID {
+		t.Fatalf("FindByUsername() id = %q, want %q", found.ID, wantID)
+	}
 	if found.Username != username {
 		t.Fatalf("FindByUsername() username = %q, want %q", found.Username, username)
+	}
+	if found.CreatedAt.IsZero() || found.UpdatedAt.IsZero() {
+		t.Fatal("FindByUsername() timestamps are zero")
 	}
 	if err := bcrypt.CompareHashAndPassword(found.PasswordHash, []byte("test-password")); err != nil {
 		t.Fatalf("stored password hash does not match: %v", err)

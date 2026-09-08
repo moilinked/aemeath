@@ -29,9 +29,12 @@ type Config struct {
 	Issuer     string
 }
 
-// Identity 是 JWT 验证后得到的用户身份。
+// Identity 是 JWT 验证后得到的用户公开身份，不含密码哈希。
 type Identity struct {
-	Username string
+	ID        string
+	Username  string
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 // AccessToken 是成功登录后签发的 Bearer Token。

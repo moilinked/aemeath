@@ -72,13 +72,27 @@ func login(service AuthService) http.HandlerFunc {
 	}
 }
 
+type currentUserResponse struct {
+	ID        string    `json:"id"`
+	Username  string    `json:"username"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
 func me(w http.ResponseWriter, r *http.Request) {
 	identity, ok := identityFromContext(r.Context())
-	if !ok {
+	if !ok || strings.TrimSpace(identity.Username) == "" {
 		writeUnauthorized(w, "authentication required")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"username": identity.Username})
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Pragma", "no-cache")
+	writeJSON(w, http.StatusOK, currentUserResponse{
+		ID:        identity.ID,
+		Username:  identity.Username,
+		CreatedAt: identity.CreatedAt.UTC(),
+		UpdatedAt: identity.UpdatedAt.UTC(),
+	})
 }
 
 func decodeJSONBody(w http.ResponseWriter, r *http.Request, maxBytes int64, dest any) bool {

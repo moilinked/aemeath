@@ -129,8 +129,11 @@ func newHTTPTestAuth(t *testing.T) *auth.Service {
 	service, err := auth.New(auth.Config{
 		Users: auth.StaticUserStore{
 			User: auth.User{
+				ID:           testHTTPUserID,
 				Username:     testHTTPUsername,
 				PasswordHash: passwordHash,
+				CreatedAt:    testHTTPUserCreatedAt,
+				UpdatedAt:    testHTTPUserUpdatedAt,
 			},
 		},
 		SigningKey: []byte("0123456789abcdef0123456789abcdef"),

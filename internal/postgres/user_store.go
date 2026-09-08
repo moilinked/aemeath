@@ -38,9 +38,9 @@ func (store *UserStore) FindByUsername(
 	var passwordHash string
 	err := store.pool.QueryRow(
 		ctx,
-		`SELECT username, password_hash FROM users WHERE username = $1`,
+		`SELECT id, username, password_hash, created_at, updated_at FROM users WHERE username = $1`,
 		username,
-	).Scan(&user.Username, &passwordHash)
+	).Scan(&user.ID, &user.Username, &passwordHash, &user.CreatedAt, &user.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return auth.User{}, auth.ErrUserNotFound
 	}

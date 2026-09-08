@@ -171,6 +171,24 @@ Invoke-RestMethod http://localhost:8080/healthz
 GET /healthz
 ```
 
+### 当前用户
+
+```text
+GET /api/auth/me
+Authorization: Bearer <access_token>
+```
+
+根据 Access Token 查询当前登录用户的公开资料。Token 缺失、无效或过期时返回 `401`。响应不含密码或密码哈希。
+
+```json
+{
+  "id": "<user_id>",
+  "username": "<username>",
+  "created_at": "<rfc3339>",
+  "updated_at": "<rfc3339>"
+}
+```
+
 ### Chat API
 
 ```text

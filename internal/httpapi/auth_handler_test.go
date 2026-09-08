@@ -15,7 +15,15 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
-const testHTTPUsername = "test-user"
+const (
+	testHTTPUsername = "test-user"
+	testHTTPUserID   = "test-user-id"
+)
+
+var (
+	testHTTPUserCreatedAt = time.Date(2026, time.September, 1, 0, 0, 0, 0, time.UTC)
+	testHTTPUserUpdatedAt = time.Date(2026, time.September, 2, 0, 0, 0, 0, time.UTC)
+)
 
 type stubAuthService struct {
 	token           *auth.AccessToken
@@ -80,9 +88,30 @@ func TestLoginAndMe(t *testing.T) {
 	if meRecorder.Code != http.StatusOK {
 		t.Fatalf("me status = %d, want 200; body=%s", meRecorder.Code, meRecorder.Body)
 	}
-	if strings.TrimSpace(meRecorder.Body.String()) !=
-		`{"username":"`+testHTTPUsername+`"}` {
-		t.Fatalf("me body = %q, want fixed username", meRecorder.Body.String())
+	if meRecorder.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("me Cache-Control = %q, want no-store", meRecorder.Header().Get("Cache-Control"))
+	}
+
+	meBody := meRecorder.Body.String()
+	if strings.Contains(meBody, "password") {
+		t.Fatal("me response exposes password material")
+	}
+
+	var currentUser currentUserResponse
+	if err := json.Unmarshal([]byte(meBody), &currentUser); err != nil {
+		t.Fatalf("decode me response: %v", err)
+	}
+	if currentUser.ID != testHTTPUserID {
+		t.Fatalf("me id = %q, want %q", currentUser.ID, testHTTPUserID)
+	}
+	if currentUser.Username != testHTTPUsername {
+		t.Fatalf("me username = %q, want %q", currentUser.Username, testHTTPUsername)
+	}
+	if !currentUser.CreatedAt.Equal(testHTTPUserCreatedAt) {
+		t.Fatalf("me created_at = %s, want %s", currentUser.CreatedAt, testHTTPUserCreatedAt)
+	}
+	if !currentUser.UpdatedAt.Equal(testHTTPUserUpdatedAt) {
+		t.Fatalf("me updated_at = %s, want %s", currentUser.UpdatedAt, testHTTPUserUpdatedAt)
 	}
 }
 
