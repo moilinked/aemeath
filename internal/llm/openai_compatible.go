@@ -10,9 +10,12 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/ecol/chat-agent/internal/retry"
 )
+
+var _ Client = (*OpenAICompatibleClient)(nil)
 
 const maxResponseBodySize = 4 << 20
 
@@ -26,7 +29,7 @@ type OpenAICompatibleConfig struct {
 	RetryPolicy retry.Policy
 }
 
-// OpenAICompatibleClient 调用 OpenAI 格式的非流式 Chat Completions API。
+// OpenAICompatibleClient 调用 OpenAI 格式的 Chat Completions API，支持非流式与流式。
 type OpenAICompatibleClient struct {
 	endpoint    string
 	apiKey      string
@@ -71,21 +74,9 @@ func (client *OpenAICompatibleClient) Chat(
 		return nil, errors.New("llm messages are required")
 	}
 
-	payload := chatCompletionRequest{
-		Model:           client.model,
-		Messages:        request.Messages,
-		Tools:           request.Tools,
-		ToolChoice:      request.ToolChoice,
-		Temperature:     request.Temperature,
-		MaxTokens:       request.MaxTokens,
-		Thinking:        request.Thinking,
-		ReasoningEffort: request.ReasoningEffort,
-		Stream:          false,
-	}
-
-	body, err := json.Marshal(payload)
+	body, err := marshalChatCompletionRequest(client.model, request, false)
 	if err != nil {
-		return nil, fmt.Errorf("marshal llm request: %w", err)
+		return nil, err
 	}
 
 	var response *ChatResponse
@@ -101,6 +92,63 @@ func (client *OpenAICompatibleClient) Chat(
 		return nil, err
 	}
 	return response, nil
+}
+
+// ChatStream 发送一次流式对话请求，并通过 emit 回传增量内容。
+// 在向调用方发出首个增量之前会重试可恢复错误；一旦开始输出，就不再重试。
+func (client *OpenAICompatibleClient) ChatStream(
+	ctx context.Context,
+	request ChatRequest,
+	emit StreamHandler,
+) (*ChatResponse, error) {
+	if len(request.Messages) == 0 {
+		return nil, errors.New("llm messages are required")
+	}
+
+	body, err := marshalChatCompletionRequest(client.model, request, true)
+	if err != nil {
+		return nil, err
+	}
+
+	policy := retry.Normalize(client.retryPolicy)
+	interval := policy.InitialInterval
+	var last error
+	for attempt := 1; attempt <= policy.MaxAttempts; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+
+		emitted := false
+		completed, attemptErr := client.sendChatStream(ctx, body, func(delta StreamDelta) error {
+			emitted = true
+			if emit == nil {
+				return nil
+			}
+			return emit(delta)
+		})
+		if attemptErr == nil {
+			return completed, nil
+		}
+		last = attemptErr
+		if emitted || attempt == policy.MaxAttempts || !retry.IsRetryable(attemptErr) {
+			return nil, attemptErr
+		}
+
+		timer := time.NewTimer(interval)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, ctx.Err()
+		case <-timer.C:
+		}
+
+		next := interval * 2
+		if next > policy.MaxInterval || next < interval {
+			next = policy.MaxInterval
+		}
+		interval = next
+	}
+	return nil, last
 }
 
 func (client *OpenAICompatibleClient) sendChat(
@@ -146,6 +194,60 @@ func (client *OpenAICompatibleClient) sendChat(
 	}, nil
 }
 
+func (client *OpenAICompatibleClient) sendChatStream(
+	ctx context.Context,
+	body []byte,
+	emit StreamHandler,
+) (*ChatResponse, error) {
+	httpRequest, err := http.NewRequestWithContext(ctx, http.MethodPost, client.endpoint, bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("create llm request: %w", err)
+	}
+	httpRequest.Header.Set("Authorization", "Bearer "+client.apiKey)
+	httpRequest.Header.Set("Content-Type", "application/json")
+	httpRequest.Header.Set("Accept", "text/event-stream")
+
+	httpResponse, err := client.httpClient.Do(httpRequest)
+	if err != nil {
+		return nil, fmt.Errorf("send llm request: %w", err)
+	}
+
+	if httpResponse.StatusCode < http.StatusOK || httpResponse.StatusCode >= http.StatusMultipleChoices {
+		responseBody, readErr := readResponseBody(httpResponse.Body)
+		if readErr != nil {
+			return nil, readErr
+		}
+		return nil, decodeAPIError(httpResponse.StatusCode, responseBody)
+	}
+
+	defer func() {
+		_ = httpResponse.Body.Close()
+	}()
+	return readChatStream(ctx, httpResponse.Body, emit)
+}
+
+func marshalChatCompletionRequest(model string, request ChatRequest, stream bool) ([]byte, error) {
+	payload := chatCompletionRequest{
+		Model:           model,
+		Messages:        request.Messages,
+		Tools:           request.Tools,
+		ToolChoice:      request.ToolChoice,
+		Temperature:     request.Temperature,
+		MaxTokens:       request.MaxTokens,
+		Thinking:        request.Thinking,
+		ReasoningEffort: request.ReasoningEffort,
+		Stream:          stream,
+	}
+	if stream {
+		payload.StreamOptions = &streamOptions{IncludeUsage: true}
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("marshal llm request: %w", err)
+	}
+	return body, nil
+}
+
 type chatCompletionRequest struct {
 	Model           string           `json:"model"`
 	Messages        []Message        `json:"messages"`
@@ -156,6 +258,11 @@ type chatCompletionRequest struct {
 	Thinking        *Thinking        `json:"thinking,omitempty"`
 	ReasoningEffort string           `json:"reasoning_effort,omitempty"`
 	Stream          bool             `json:"stream"`
+	StreamOptions   *streamOptions   `json:"stream_options,omitempty"`
+}
+
+type streamOptions struct {
+	IncludeUsage bool `json:"include_usage"`
 }
 
 type chatCompletionResponse struct {

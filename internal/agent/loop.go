@@ -36,6 +36,17 @@ func (agent *Agent) Run(
 	sessionID string,
 	userMessage string,
 ) (*Result, error) {
+	return agent.RunStream(ctx, sessionID, userMessage, nil)
+}
+
+// RunStream 执行与 Run 相同的 Agent Loop，并通过 emit 回传增量、工具调用和工具结果。
+// 客户端断开导致的 context 取消会停止后续 LLM 请求和工具执行。
+func (agent *Agent) RunStream(
+	ctx context.Context,
+	sessionID string,
+	userMessage string,
+	emit StreamHandler,
+) (*Result, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -70,10 +81,10 @@ func (agent *Agent) Run(
 	var usage llm.Usage
 
 	for step := 1; step <= agent.maxSteps; step++ {
-		response, err := agent.llmClient.Chat(ctx, llm.ChatRequest{
+		response, err := agent.completeChat(ctx, llm.ChatRequest{
 			Messages: messages,
 			Tools:    definitions,
-		})
+		}, emit)
 		if err != nil {
 			return nil, fmt.Errorf("agent LLM step %d: %w", step, err)
 		}
@@ -124,6 +135,17 @@ func (agent *Agent) Run(
 		}
 
 		for _, call := range assistant.ToolCalls {
+			if err := emitStreamEvent(emit, StreamEvent{
+				Type: StreamEventToolCall,
+				ToolCall: &StreamToolCall{
+					ID:        call.ID,
+					Name:      call.Function.Name,
+					Arguments: call.Function.Arguments,
+				},
+			}); err != nil {
+				return nil, err
+			}
+
 			observation, err := agent.toolRegistry.Execute(
 				ctx,
 				call.Function.Name,
@@ -134,6 +156,17 @@ func (agent *Agent) Run(
 					return nil, ctxErr
 				}
 				observation = toolErrorObservation(err)
+			}
+
+			if err := emitStreamEvent(emit, StreamEvent{
+				Type: StreamEventToolResult,
+				ToolCall: &StreamToolCall{
+					ID:      call.ID,
+					Name:    call.Function.Name,
+					Content: observation,
+				},
+			}); err != nil {
+				return nil, err
 			}
 
 			toolMessage := llm.Message{
@@ -147,6 +180,42 @@ func (agent *Agent) Run(
 	}
 
 	return nil, fmt.Errorf("%w: limit=%d", ErrMaxStepsExceeded, agent.maxSteps)
+}
+
+func (agent *Agent) completeChat(
+	ctx context.Context,
+	request llm.ChatRequest,
+	emit StreamHandler,
+) (*llm.ChatResponse, error) {
+	if emit == nil {
+		return agent.llmClient.Chat(ctx, request)
+	}
+	return agent.llmClient.ChatStream(ctx, request, func(delta llm.StreamDelta) error {
+		if delta.ReasoningContent != "" {
+			if err := emitStreamEvent(emit, StreamEvent{
+				Type:    StreamEventReasoning,
+				Content: delta.ReasoningContent,
+			}); err != nil {
+				return err
+			}
+		}
+		if delta.Content != "" {
+			if err := emitStreamEvent(emit, StreamEvent{
+				Type:    StreamEventDelta,
+				Content: delta.Content,
+			}); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+func emitStreamEvent(emit StreamHandler, event StreamEvent) error {
+	if emit == nil {
+		return nil
+	}
+	return emit(event)
 }
 
 type sessionGate struct {

@@ -47,6 +47,15 @@ func (runner *countingChatRunner) Run(
 	return runner.result, runner.err
 }
 
+func (runner *countingChatRunner) RunStream(
+	ctx context.Context,
+	sessionID string,
+	message string,
+	_ agent.StreamHandler,
+) (*agent.Result, error) {
+	return runner.Run(ctx, sessionID, message)
+}
+
 func (runner *countingChatRunner) calls() int {
 	runner.mu.Lock()
 	defer runner.mu.Unlock()
@@ -87,6 +96,15 @@ func (runner *blockingChatRunner) Run(
 	}
 }
 
+func (runner *blockingChatRunner) RunStream(
+	ctx context.Context,
+	sessionID string,
+	message string,
+	_ agent.StreamHandler,
+) (*agent.Result, error) {
+	return runner.Run(ctx, sessionID, message)
+}
+
 func (runner *blockingChatRunner) waitUntilStarted(t *testing.T) {
 	t.Helper()
 	select {
@@ -123,6 +141,24 @@ type scriptedHTTPLLMClient struct {
 	requests  []llm.ChatRequest
 }
 
+func (runner *stubChatRunner) RunStream(
+	ctx context.Context,
+	sessionID string,
+	message string,
+	emit agent.StreamHandler,
+) (*agent.Result, error) {
+	result, err := runner.Run(ctx, sessionID, message)
+	if err != nil || result == nil || emit == nil {
+		return result, err
+	}
+	if result.Message != "" {
+		if err := emit(agent.StreamEvent{Type: agent.StreamEventDelta, Content: result.Message}); err != nil {
+			return nil, err
+		}
+	}
+	return result, nil
+}
+
 func (client *scriptedHTTPLLMClient) Chat(
 	_ context.Context,
 	request llm.ChatRequest,
@@ -136,6 +172,14 @@ func (client *scriptedHTTPLLMClient) Chat(
 		return nil, errors.New("unexpected LLM request")
 	}
 	return client.responses[index], nil
+}
+
+func (client *scriptedHTTPLLMClient) ChatStream(
+	ctx context.Context,
+	request llm.ChatRequest,
+	emit llm.StreamHandler,
+) (*llm.ChatResponse, error) {
+	return llm.ChatStreamFromChat(ctx, client.Chat, request, emit)
 }
 
 func TestChatReturnsFinalAnswer(t *testing.T) {
@@ -584,6 +628,193 @@ func TestChatRunsAgentLoop(t *testing.T) {
 	if len(llmClient.requests) != 2 {
 		t.Fatalf("LLM request count = %d, want 2", len(llmClient.requests))
 	}
+}
+
+func TestChatStreamReturnsSSEEvents(t *testing.T) {
+	llmClient := &scriptedHTTPLLMClient{
+		responses: []*llm.ChatResponse{
+			{
+				Message: llm.Message{
+					Role: llm.RoleAssistant,
+					ToolCalls: []llm.ToolCall{
+						{
+							ID:   "call-1",
+							Type: "function",
+							Function: llm.FunctionCall{
+								Name:      "calculator",
+								Arguments: `{"expression":"128 * 39"}`,
+							},
+						},
+					},
+				},
+			},
+			{Message: llm.Message{Role: llm.RoleAssistant, Content: "128 × 39 = 4992"}},
+		},
+	}
+	registry, err := tools.NewRegistry(tools.NewCalculatorTool())
+	if err != nil {
+		t.Fatalf("tools.NewRegistry() error = %v", err)
+	}
+	chatAgent, err := agent.New(agent.Config{
+		LLM:      llmClient,
+		Sessions: session.NewMemoryStore(),
+		Tools:    registry,
+		MaxSteps: 3,
+	})
+	if err != nil {
+		t.Fatalf("agent.New() error = %v", err)
+	}
+
+	router := newChatTestRouter(t, chatAgent)
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, authorizedJSONRequest(
+		t,
+		http.MethodPost,
+		"/api/chat/stream",
+		`{"session_id":"session-1","message":"帮我计算 128 * 39"}`,
+	))
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", recorder.Code, recorder.Body)
+	}
+	if !strings.Contains(recorder.Header().Get("Content-Type"), "text/event-stream") {
+		t.Fatalf("Content-Type = %q, want text/event-stream", recorder.Header().Get("Content-Type"))
+	}
+
+	events := parseSSEEvents(recorder.Body.String())
+	if len(events) < 4 {
+		t.Fatalf("SSE events = %#v, want tool_call, tool_result, delta, done", events)
+	}
+	if events[0].Event != "tool_call" || !strings.Contains(events[0].Data, `"name":"calculator"`) {
+		t.Fatalf("first event = %#v, want tool_call", events[0])
+	}
+	if events[1].Event != "tool_result" {
+		t.Fatalf("second event = %#v, want tool_result", events[1])
+	}
+	if events[2].Event != "delta" || !strings.Contains(events[2].Data, "128 × 39 = 4992") {
+		t.Fatalf("third event = %#v, want delta", events[2])
+	}
+	if events[len(events)-1].Event != "done" {
+		t.Fatalf("last event = %#v, want done", events[len(events)-1])
+	}
+}
+
+func TestChatStreamRequiresBearerToken(t *testing.T) {
+	router := newChatTestRouter(t, newHTTPTestAgent(t))
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/chat/stream",
+		strings.NewReader(`{"session_id":"session-1","message":"hello"}`),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+
+	router.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401; body=%s", recorder.Code, recorder.Body)
+	}
+}
+
+func TestChatStreamHonorsCanceledContext(t *testing.T) {
+	store := newIdempotencyStore(time.Hour)
+	runner := newBlockingChatRunner(&agent.Result{Message: "unused"})
+	handler := chatStream(runner, store)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	ctx = context.WithValue(ctx, identityContextKey{}, auth.Identity{Username: testHTTPUsername})
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/chat/stream",
+		strings.NewReader(`{"session_id":"session-1","message":"hello"}`),
+	).WithContext(ctx)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set(idempotencyHeader, "stream-canceled-key")
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, request)
+	}()
+	runner.waitUntilStarted(t)
+	cancel()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for canceled stream to stop")
+	}
+	runner.finish()
+
+	retry := httptest.NewRequest(
+		http.MethodPost,
+		"/api/chat/stream",
+		strings.NewReader(`{"session_id":"session-1","message":"hello"}`),
+	).WithContext(context.WithValue(
+		context.Background(),
+		identityContextKey{},
+		auth.Identity{Username: testHTTPUsername},
+	))
+	retry.Header.Set("Content-Type", "application/json")
+	retry.Header.Set(idempotencyHeader, "stream-canceled-key")
+	retryRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(retryRecorder, retry)
+	if retryRecorder.Code != http.StatusOK {
+		t.Fatalf("retry status = %d, want 200; body=%s", retryRecorder.Code, retryRecorder.Body)
+	}
+	if !strings.Contains(retryRecorder.Body.String(), "event: done") {
+		t.Fatalf("retry body = %q, want SSE done", retryRecorder.Body.String())
+	}
+}
+
+func TestChatStreamReplaysIdempotentSuccess(t *testing.T) {
+	runner := &countingChatRunner{result: &agent.Result{Message: "cached-stream"}}
+	router := newChatTestRouter(t, runner)
+	body := `{"session_id":"session-1","message":"hello"}`
+
+	first := httptest.NewRecorder()
+	router.ServeHTTP(first, authorizedJSONRequestWithKey(
+		t, http.MethodPost, "/api/chat/stream", body, "stream-same-key",
+	))
+	if first.Code != http.StatusOK {
+		t.Fatalf("first status = %d, want 200; body=%s", first.Code, first.Body)
+	}
+
+	second := httptest.NewRecorder()
+	router.ServeHTTP(second, authorizedJSONRequestWithKey(
+		t, http.MethodPost, "/api/chat/stream", body, "stream-same-key",
+	))
+	if second.Code != http.StatusOK {
+		t.Fatalf("second status = %d, want 200; body=%s", second.Code, second.Body)
+	}
+	if !strings.Contains(second.Body.String(), `"message":"cached-stream"`) {
+		t.Fatalf("replay body = %q, want cached done event", second.Body.String())
+	}
+	if runner.calls() != 1 {
+		t.Fatalf("Run() calls = %d, want 1", runner.calls())
+	}
+}
+
+type sseTestEvent struct {
+	Event string
+	Data  string
+}
+
+func parseSSEEvents(body string) []sseTestEvent {
+	var events []sseTestEvent
+	var current sseTestEvent
+	for _, line := range strings.Split(body, "\n") {
+		switch {
+		case strings.HasPrefix(line, "event: "):
+			current.Event = strings.TrimPrefix(line, "event: ")
+		case strings.HasPrefix(line, "data: "):
+			current.Data = strings.TrimPrefix(line, "data: ")
+		case strings.TrimSpace(line) == "" && current.Event != "":
+			events = append(events, current)
+			current = sseTestEvent{}
+		}
+	}
+	return events
 }
 
 func newChatTestRouter(t *testing.T, runner ChatRunner) http.Handler {

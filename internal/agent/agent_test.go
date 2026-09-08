@@ -19,6 +19,14 @@ func (client *stubLLMClient) Chat(
 	return nil, nil
 }
 
+func (client *stubLLMClient) ChatStream(
+	ctx context.Context,
+	request llm.ChatRequest,
+	emit llm.StreamHandler,
+) (*llm.ChatResponse, error) {
+	return llm.ChatStreamFromChat(ctx, client.Chat, request, emit)
+}
+
 type stubSessionStore struct{}
 
 func (store *stubSessionStore) Load(context.Context, string) ([]llm.Message, error) {

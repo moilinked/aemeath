@@ -97,6 +97,14 @@ func (stubLLMClient) Chat(context.Context, llm.ChatRequest) (*llm.ChatResponse, 
 	return &llm.ChatResponse{}, nil
 }
 
+func (client stubLLMClient) ChatStream(
+	ctx context.Context,
+	request llm.ChatRequest,
+	emit llm.StreamHandler,
+) (*llm.ChatResponse, error) {
+	return llm.ChatStreamFromChat(ctx, client.Chat, request, emit)
+}
+
 func newHTTPTestAgent(t *testing.T) *agent.Agent {
 	t.Helper()
 

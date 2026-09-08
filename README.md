@@ -23,10 +23,10 @@
 - 组合 LLM、Session 和 Tools，并限制最大执行步数的 Agent
 - 支持工具错误回传、Token 汇总和会话持久化的 Agent Loop
 - PostgreSQL 用户存储、bcrypt 密码校验与 Bearer JWT 路由保护
-- 受登录保护的 `POST /api/chat`、Agent 错误映射与聊天幂等
+- 受登录保护的 `POST /api/chat`、SSE 流式 `POST /api/chat/stream`、Agent 错误映射与聊天幂等
 - LLM 与天气请求对 429/5xx 等可恢复错误进行指数重试
 
-当前已提供受 JWT 保护的 `POST /api/chat`，尚未实现 Web UI。
+当前已提供受 JWT 保护的 `POST /api/chat` 与 SSE 流式 `POST /api/chat/stream`，尚未实现 Web UI。
 
 ## MVP 目标
 
@@ -36,7 +36,7 @@
 - 基于 Session ID 的多轮上下文
 - Tool Calling 与本地工具执行
 - 带最大执行步数的 Agent Loop
-- JSON 格式的 Chat HTTP API
+- JSON 与 SSE 流式 Chat HTTP API
 
 数据库以外的 Redis、RAG、MCP、长期记忆和 Multi-Agent 不属于当前范围。
 
@@ -218,6 +218,27 @@ Idempotency-Key: <unique-per-send>
 
 缺少 `session_id`、`message` 或合法 `Idempotency-Key` 时返回 `400`；未登录或 Token 无效时返回 `401`。同一用户复用相同键且请求内容一致时，直接返回首次结果；请求仍在处理中，或同一键被用于不同 `session_id`/`message`，返回 `409`。幂等记录保存在进程内存中，默认 24 小时。客户端断开导致的取消不会写入幂等缓存，允许随后用同一把键重新请求。
 
+### Chat SSE
+
+```text
+POST /api/chat/stream
+Authorization: Bearer <access_token>
+Idempotency-Key: <unique-per-send>
+```
+
+请求体与 `POST /api/chat` 相同。成功时 HTTP 状态为 `200`，`Content-Type` 为 `text/event-stream`。客户端断开连接会取消本次 Agent 运行，并停止后续 LLM 与工具调用。
+
+| event | data | 说明 |
+| --- | --- | --- |
+| `delta` | `{"content":"..."}` | 最终回答增量 |
+| `reasoning` | `{"content":"..."}` | 模型思考内容增量 |
+| `tool_call` | `{"id":"...","name":"...","arguments":"..."}` | 模型决定调用工具 |
+| `tool_result` | `{"id":"...","name":"...","content":"..."}` | 本地工具执行结果 |
+| `done` | `{"message":"..."}` | 完整最终回答，流结束 |
+| `error` | `{"error":"..."}` | 流开始后的失败 |
+
+参数校验失败仍返回 JSON 错误（如 `400`/`401`/`409`）。同一把 `Idempotency-Key` 在成功后重放时，会直接发送 `done` 事件。
+
 ## 环境变量
 
 系统环境变量优先级高于 `.env`。
@@ -302,8 +323,8 @@ go test -tags=integration -run "^TestDeepSeekConnectivity$" -count=1 ./internal/
 
 - [x] 使用数据库与 `UserStore` 替代临时环境变量单用户凭据
 - [x] Web Chat UI
-- [ ] SSE 流式响应
-- [ ] SSE 支持客户端主动断开并取消本次 Chat，停止后续 LLM 与工具调用
+- [x] SSE 流式响应
+- [x] SSE 支持客户端主动断开并取消本次 Chat，停止后续 LLM 与工具调用
 - [x] PostgreSQL Session 持久化
 - [ ] 上下文裁剪和 Token 预算
 - [ ] Tracing 与 Evals

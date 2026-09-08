@@ -318,3 +318,168 @@ func TestOpenAICompatibleClientRetriesTransientError(t *testing.T) {
 		t.Fatalf("attempts = %d, want 3", attempts.Load())
 	}
 }
+
+func TestOpenAICompatibleClientChatStream(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			Model         string `json:"model"`
+			Stream        bool   `json:"stream"`
+			StreamOptions *struct {
+				IncludeUsage bool `json:"include_usage"`
+			} `json:"stream_options"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Errorf("decode request: %v", err)
+		}
+		if !request.Stream {
+			t.Error("stream = false, want true")
+		}
+		if request.StreamOptions == nil || !request.StreamOptions.IncludeUsage {
+			t.Errorf("stream_options = %#v", request.StreamOptions)
+		}
+		if r.Header.Get("Accept") != "text/event-stream" {
+			t.Errorf("Accept = %q", r.Header.Get("Accept"))
+		}
+
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"id\":\"chat-stream\",\"model\":\"test-model\",\"choices\":[{\"delta\":{\"role\":\"assistant\",\"content\":\"你\"}}]}\n\n"))
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"好\",\"reasoning_content\":\"think\"}}]}\n\n"))
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":2,\"completion_tokens\":2,\"total_tokens\":4}}\n\n"))
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	t.Cleanup(server.Close)
+
+	client, err := NewOpenAICompatibleClient(OpenAICompatibleConfig{
+		BaseURL:    server.URL,
+		APIKey:     "test-key",
+		Model:      "test-model",
+		HTTPClient: server.Client(),
+	})
+	if err != nil {
+		t.Fatalf("NewOpenAICompatibleClient() error = %v", err)
+	}
+
+	var deltas []StreamDelta
+	response, err := client.ChatStream(context.Background(), ChatRequest{
+		Messages: []Message{{Role: RoleUser, Content: "你好"}},
+	}, func(delta StreamDelta) error {
+		deltas = append(deltas, delta)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("ChatStream() error = %v", err)
+	}
+	if response.Message.Content != "你好" {
+		t.Fatalf("content = %q, want 你好", response.Message.Content)
+	}
+	if response.Message.ReasoningContent != "think" {
+		t.Fatalf("reasoning = %q, want think", response.Message.ReasoningContent)
+	}
+	if response.FinishReason != "stop" || response.Usage.TotalTokens != 4 {
+		t.Fatalf("response = %#v", response)
+	}
+	if len(deltas) != 3 {
+		t.Fatalf("delta count = %d, want 3: %#v", len(deltas), deltas)
+	}
+}
+
+func TestOpenAICompatibleClientChatStreamToolCalls(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call-1\",\"type\":\"function\",\"function\":{\"name\":\"weather\",\"arguments\":\"\"}}]}}]}\n\n"))
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"{\\\"city\\\":\\\"北京\\\"}\"}}]}}]}\n\n"))
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n"))
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	t.Cleanup(server.Close)
+
+	client, err := NewOpenAICompatibleClient(OpenAICompatibleConfig{
+		BaseURL:    server.URL,
+		APIKey:     "test-key",
+		Model:      "test-model",
+		HTTPClient: server.Client(),
+	})
+	if err != nil {
+		t.Fatalf("NewOpenAICompatibleClient() error = %v", err)
+	}
+
+	response, err := client.ChatStream(context.Background(), ChatRequest{
+		Messages: []Message{{Role: RoleUser, Content: "天气"}},
+	}, nil)
+	if err != nil {
+		t.Fatalf("ChatStream() error = %v", err)
+	}
+	if response.FinishReason != "tool_calls" {
+		t.Fatalf("FinishReason = %q, want tool_calls", response.FinishReason)
+	}
+	if len(response.Message.ToolCalls) != 1 {
+		t.Fatalf("ToolCalls = %#v", response.Message.ToolCalls)
+	}
+	call := response.Message.ToolCalls[0]
+	if call.ID != "call-1" || call.Function.Name != "weather" || call.Function.Arguments != `{"city":"北京"}` {
+		t.Fatalf("tool call = %#v", call)
+	}
+}
+
+func TestOpenAICompatibleClientChatStreamHonorsContext(t *testing.T) {
+	client, err := NewOpenAICompatibleClient(OpenAICompatibleConfig{
+		BaseURL: "https://example.com/v1",
+		APIKey:  "test-key",
+		Model:   "test-model",
+	})
+	if err != nil {
+		t.Fatalf("NewOpenAICompatibleClient() error = %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err = client.ChatStream(ctx, ChatRequest{
+		Messages: []Message{{Role: RoleUser, Content: "你好"}},
+	}, nil)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("ChatStream() error = %v, want context.Canceled", err)
+	}
+}
+
+func TestOpenAICompatibleClientChatStreamRetriesBeforeOutput(t *testing.T) {
+	var attempts atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if attempts.Add(1) < 3 {
+			w.WriteHeader(http.StatusBadGateway)
+			_, _ = w.Write([]byte(`{"error":{"message":"temporary"}}`))
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\n"))
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	t.Cleanup(server.Close)
+
+	client, err := NewOpenAICompatibleClient(OpenAICompatibleConfig{
+		BaseURL:    server.URL,
+		APIKey:     "test-key",
+		Model:      "test-model",
+		HTTPClient: server.Client(),
+		RetryPolicy: retry.Policy{
+			MaxAttempts:     3,
+			InitialInterval: time.Nanosecond,
+			MaxInterval:     time.Millisecond,
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewOpenAICompatibleClient() error = %v", err)
+	}
+
+	response, err := client.ChatStream(context.Background(), ChatRequest{
+		Messages: []Message{{Role: RoleUser, Content: "你好"}},
+	}, nil)
+	if err != nil {
+		t.Fatalf("ChatStream() error = %v", err)
+	}
+	if response == nil || response.Message.Content != "ok" {
+		t.Fatalf("ChatStream() response = %#v", response)
+	}
+	if attempts.Load() != 3 {
+		t.Fatalf("attempts = %d, want 3", attempts.Load())
+	}
+}

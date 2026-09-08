@@ -24,45 +24,8 @@ type chatResponse struct {
 
 func chat(runner ChatRunner, store *idempotencyStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		var request chatRequest
-		if !decodeJSONBody(w, r, maxChatRequestBodySize, &request) {
-			return
-		}
-
-		sessionID := strings.TrimSpace(request.SessionID)
-		message := strings.TrimSpace(request.Message)
-		if sessionID == "" {
-			writeAPIError(w, http.StatusBadRequest, "session_id is required")
-			return
-		}
-		if message == "" {
-			writeAPIError(w, http.StatusBadRequest, "message is required")
-			return
-		}
-
-		identity, ok := identityFromContext(r.Context())
+		sessionID, message, key, record, ok := prepareChat(w, r, store)
 		if !ok {
-			writeUnauthorized(w, "authentication required")
-			return
-		}
-		idempotencyKey, err := parseIdempotencyKey(r.Header.Get(idempotencyHeader))
-		if err != nil {
-			writeAPIError(w, http.StatusBadRequest, err.Error())
-			return
-		}
-
-		key := scopedIdempotencyKey(identity.Username, idempotencyKey)
-		record, err := store.Begin(key, chatPayloadHash(sessionID, message))
-		if errors.Is(err, errIdempotencyInProgress) {
-			writeAPIError(w, http.StatusConflict, "chat request is already in progress")
-			return
-		}
-		if errors.Is(err, errIdempotencyPayloadMismatch) {
-			writeAPIError(w, http.StatusConflict, "Idempotency-Key already used with a different request")
-			return
-		}
-		if err != nil {
-			writeAPIError(w, http.StatusInternalServerError, "chat completion failed")
 			return
 		}
 		if record.Cached {
@@ -108,6 +71,55 @@ func chat(runner ChatRunner, store *idempotencyStore) http.HandlerFunc {
 		committed = true
 		writeJSONBytes(w, http.StatusOK, body)
 	}
+}
+
+func prepareChat(
+	w http.ResponseWriter,
+	r *http.Request,
+	store *idempotencyStore,
+) (sessionID string, message string, key string, record idempotencyRecord, ok bool) {
+	var request chatRequest
+	if !decodeJSONBody(w, r, maxChatRequestBodySize, &request) {
+		return "", "", "", idempotencyRecord{}, false
+	}
+
+	sessionID = strings.TrimSpace(request.SessionID)
+	message = strings.TrimSpace(request.Message)
+	if sessionID == "" {
+		writeAPIError(w, http.StatusBadRequest, "session_id is required")
+		return "", "", "", idempotencyRecord{}, false
+	}
+	if message == "" {
+		writeAPIError(w, http.StatusBadRequest, "message is required")
+		return "", "", "", idempotencyRecord{}, false
+	}
+
+	identity, authenticated := identityFromContext(r.Context())
+	if !authenticated {
+		writeUnauthorized(w, "authentication required")
+		return "", "", "", idempotencyRecord{}, false
+	}
+	idempotencyKey, err := parseIdempotencyKey(r.Header.Get(idempotencyHeader))
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, err.Error())
+		return "", "", "", idempotencyRecord{}, false
+	}
+
+	key = scopedIdempotencyKey(identity.Username, idempotencyKey)
+	record, err = store.Begin(key, chatPayloadHash(sessionID, message))
+	if errors.Is(err, errIdempotencyInProgress) {
+		writeAPIError(w, http.StatusConflict, "chat request is already in progress")
+		return "", "", "", idempotencyRecord{}, false
+	}
+	if errors.Is(err, errIdempotencyPayloadMismatch) {
+		writeAPIError(w, http.StatusConflict, "Idempotency-Key already used with a different request")
+		return "", "", "", idempotencyRecord{}, false
+	}
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, "chat completion failed")
+		return "", "", "", idempotencyRecord{}, false
+	}
+	return sessionID, message, key, record, true
 }
 
 func writeCachedChatError(

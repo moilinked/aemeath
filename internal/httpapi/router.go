@@ -16,6 +16,12 @@ import (
 // ChatRunner 是 HTTP 聊天边界依赖的最小 Agent 能力。
 type ChatRunner interface {
 	Run(ctx context.Context, sessionID string, userMessage string) (*agent.Result, error)
+	RunStream(
+		ctx context.Context,
+		sessionID string,
+		userMessage string,
+		emit agent.StreamHandler,
+	) (*agent.Result, error)
 }
 
 // Dependencies 包含 HTTP 层后续处理请求所需的应用依赖。
@@ -47,6 +53,7 @@ func NewRouter(dependencies Dependencies) (http.Handler, error) {
 		api.Use(requireBearer(dependencies.Auth))
 		api.Get("/auth/me", me)
 		api.Post("/chat", chat(dependencies.Agent, idempotency))
+		api.Post("/chat/stream", chatStream(dependencies.Agent, idempotency))
 	})
 
 	return router, nil

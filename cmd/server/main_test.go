@@ -210,3 +210,11 @@ func (stubServerLLMClient) Chat(
 ) (*llm.ChatResponse, error) {
 	return &llm.ChatResponse{}, nil
 }
+
+func (client stubServerLLMClient) ChatStream(
+	ctx context.Context,
+	request llm.ChatRequest,
+	emit llm.StreamHandler,
+) (*llm.ChatResponse, error) {
+	return llm.ChatStreamFromChat(ctx, client.Chat, request, emit)
+}

@@ -34,6 +34,14 @@ func (client *scriptedLLMClient) Chat(
 	return client.responses[index], nil
 }
 
+func (client *scriptedLLMClient) ChatStream(
+	ctx context.Context,
+	request llm.ChatRequest,
+	emit llm.StreamHandler,
+) (*llm.ChatResponse, error) {
+	return llm.ChatStreamFromChat(ctx, client.Chat, request, emit)
+}
+
 type recordingSessionStore struct {
 	history   []llm.Message
 	appended  []llm.Message
@@ -254,6 +262,103 @@ func TestAgentRunStopsBeforeToolAtMaxSteps(t *testing.T) {
 	}
 	if countingTool.calls != 0 {
 		t.Fatalf("tool calls = %d, want 0", countingTool.calls)
+	}
+	if len(store.appended) != 0 {
+		t.Fatalf("appended messages = %d, want 0", len(store.appended))
+	}
+}
+
+func TestAgentRunStreamEmitsEvents(t *testing.T) {
+	calculator := &loopTestTool{name: "calculator", result: "42"}
+	client := &scriptedLLMClient{
+		responses: []*llm.ChatResponse{
+			{
+				Message: llm.Message{
+					Role:             llm.RoleAssistant,
+					ReasoningContent: "need calculation",
+					ToolCalls: []llm.ToolCall{
+						{
+							ID:   "call-1",
+							Type: "function",
+							Function: llm.FunctionCall{
+								Name:      "calculator",
+								Arguments: `{"expression":"6*7"}`,
+							},
+						},
+					},
+				},
+			},
+			{Message: llm.Message{Role: llm.RoleAssistant, Content: "answer is 42"}},
+		},
+	}
+	store := &recordingSessionStore{}
+	created := newLoopAgent(t, client, store, 3, calculator)
+
+	var events []StreamEvent
+	result, err := created.RunStream(
+		context.Background(),
+		"session-1",
+		"calculate",
+		func(event StreamEvent) error {
+			events = append(events, event)
+			return nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("RunStream() error = %v", err)
+	}
+	if result.Message != "answer is 42" {
+		t.Fatalf("RunStream() message = %q", result.Message)
+	}
+
+	wantTypes := []StreamEventType{
+		StreamEventReasoning,
+		StreamEventToolCall,
+		StreamEventToolResult,
+		StreamEventDelta,
+	}
+	if len(events) != len(wantTypes) {
+		t.Fatalf("event count = %d, want %d: %#v", len(events), len(wantTypes), events)
+	}
+	for index, wantType := range wantTypes {
+		if events[index].Type != wantType {
+			t.Fatalf("event[%d] type = %q, want %q", index, events[index].Type, wantType)
+		}
+	}
+	if events[0].Content != "need calculation" {
+		t.Fatalf("reasoning = %q", events[0].Content)
+	}
+	if events[1].ToolCall == nil || events[1].ToolCall.Name != "calculator" {
+		t.Fatalf("tool_call = %#v", events[1].ToolCall)
+	}
+	if events[2].ToolCall == nil || events[2].ToolCall.Content != "42" {
+		t.Fatalf("tool_result = %#v", events[2].ToolCall)
+	}
+	if events[3].Content != "answer is 42" {
+		t.Fatalf("delta = %q", events[3].Content)
+	}
+}
+
+func TestAgentRunStreamStopsWhenHandlerFails(t *testing.T) {
+	handlerErr := errors.New("client disconnected")
+	client := &scriptedLLMClient{
+		responses: []*llm.ChatResponse{
+			{Message: llm.Message{Role: llm.RoleAssistant, Content: "hello"}},
+		},
+	}
+	store := &recordingSessionStore{}
+	created := newLoopAgent(t, client, store, 2)
+
+	_, err := created.RunStream(
+		context.Background(),
+		"session-1",
+		"hi",
+		func(StreamEvent) error {
+			return handlerErr
+		},
+	)
+	if !errors.Is(err, handlerErr) {
+		t.Fatalf("RunStream() error = %v, want handler error", err)
 	}
 	if len(store.appended) != 0 {
 		t.Fatalf("appended messages = %d, want 0", len(store.appended))
