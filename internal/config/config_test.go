@@ -8,10 +8,8 @@ import (
 )
 
 const (
-	testAuthUsername     = "test-user"
-	testAuthPasswordHash = "test-bcrypt-hash"
-	testJWTSecret        = "0123456789abcdef0123456789abcdef"
-	testDatabaseURL      = "postgres://chat_agent:chat_agent@127.0.0.1:5432/chat_agent?sslmode=disable"
+	testJWTSecret   = "0123456789abcdef0123456789abcdef"
+	testDatabaseURL = "postgres://chat_agent:chat_agent@127.0.0.1:5432/chat_agent?sslmode=disable"
 )
 
 func TestLoad(t *testing.T) {
@@ -29,10 +27,6 @@ func TestLoad(t *testing.T) {
 		openAIAPIKey      string
 		openAIBaseURL     string
 		openAIModel       string
-		authUsername      string
-		authPasswordHash  string
-		missingUsername   bool
-		missingPassword   bool
 		jwtSecret         string
 		jwtAccessTTL      string
 		jwtIssuer         string
@@ -61,11 +55,9 @@ func TestLoad(t *testing.T) {
 			},
 			wantAgent: AgentConfig{MaxSteps: defaultAgentMaxSteps},
 			wantAuth: AuthConfig{
-				Username:     testAuthUsername,
-				PasswordHash: testAuthPasswordHash,
-				SigningKey:   testJWTSecret,
-				AccessTTL:    defaultJWTAccessTTL,
-				Issuer:       defaultJWTIssuer,
+				SigningKey: testJWTSecret,
+				AccessTTL:  defaultJWTAccessTTL,
+				Issuer:     defaultJWTIssuer,
 			},
 		},
 		{
@@ -82,8 +74,6 @@ func TestLoad(t *testing.T) {
 			openAIAPIKey:      "secret-key",
 			openAIBaseURL:     "https://gateway.example.com/v1",
 			openAIModel:       "chat-gpt-luna",
-			authUsername:      "configured-user",
-			authPasswordHash:  "configured-bcrypt-hash",
 			jwtSecret:         "abcdef0123456789abcdef0123456789",
 			jwtAccessTTL:      "30m",
 			jwtIssuer:         "test-issuer",
@@ -101,11 +91,9 @@ func TestLoad(t *testing.T) {
 			},
 			wantAgent: AgentConfig{MaxSteps: 12},
 			wantAuth: AuthConfig{
-				Username:     "configured-user",
-				PasswordHash: "configured-bcrypt-hash",
-				SigningKey:   "abcdef0123456789abcdef0123456789",
-				AccessTTL:    30 * time.Minute,
-				Issuer:       "test-issuer",
+				SigningKey: "abcdef0123456789abcdef0123456789",
+				AccessTTL:  30 * time.Minute,
+				Issuer:     "test-issuer",
 			},
 		},
 		{
@@ -124,11 +112,9 @@ func TestLoad(t *testing.T) {
 			},
 			wantAgent: AgentConfig{MaxSteps: defaultAgentMaxSteps},
 			wantAuth: AuthConfig{
-				Username:     testAuthUsername,
-				PasswordHash: testAuthPasswordHash,
-				SigningKey:   testJWTSecret,
-				AccessTTL:    defaultJWTAccessTTL,
-				Issuer:       defaultJWTIssuer,
+				SigningKey: testJWTSecret,
+				AccessTTL:  defaultJWTAccessTTL,
+				Issuer:     defaultJWTIssuer,
 			},
 		},
 		{
@@ -162,16 +148,6 @@ func TestLoad(t *testing.T) {
 			wantErr:    true,
 		},
 		{
-			name:            "rejects missing auth username",
-			missingUsername: true,
-			wantErr:         true,
-		},
-		{
-			name:            "rejects missing auth password hash",
-			missingPassword: true,
-			wantErr:         true,
-		},
-		{
 			name:             "rejects missing JWT secret",
 			missingJWTSecret: true,
 			wantErr:          true,
@@ -197,11 +173,9 @@ func TestLoad(t *testing.T) {
 			},
 			wantAgent: AgentConfig{MaxSteps: defaultAgentMaxSteps},
 			wantAuth: AuthConfig{
-				Username:     testAuthUsername,
-				PasswordHash: testAuthPasswordHash,
-				SigningKey:   "short",
-				AccessTTL:    defaultJWTAccessTTL,
-				Issuer:       defaultJWTIssuer,
+				SigningKey: "short",
+				AccessTTL:  defaultJWTAccessTTL,
+				Issuer:     defaultJWTIssuer,
 			},
 		},
 		{
@@ -259,22 +233,6 @@ func TestLoad(t *testing.T) {
 			t.Setenv("DEEPSEEK_API_KEY", "")
 			t.Setenv("DEEPSEEK_BASE_URL", "")
 			t.Setenv("DEEPSEEK_MODEL", "")
-			username := testAuthUsername
-			if tt.authUsername != "" {
-				username = tt.authUsername
-			}
-			if tt.missingUsername {
-				username = ""
-			}
-			passwordHash := testAuthPasswordHash
-			if tt.authPasswordHash != "" {
-				passwordHash = tt.authPasswordHash
-			}
-			if tt.missingPassword {
-				passwordHash = ""
-			}
-			t.Setenv("AUTH_USERNAME", username)
-			t.Setenv("AUTH_PASSWORD_HASH", passwordHash)
 			signingKey := testJWTSecret
 			if tt.jwtSecret != "" {
 				signingKey = tt.jwtSecret
@@ -302,9 +260,6 @@ func TestLoad(t *testing.T) {
 				if signingKey != "" && strings.Contains(err.Error(), signingKey) {
 					t.Fatal("Load() error exposes JWT signing key")
 				}
-				if passwordHash != "" && strings.Contains(err.Error(), passwordHash) {
-					t.Fatal("Load() error exposes password hash")
-				}
 				return
 			}
 			if err != nil {
@@ -330,12 +285,6 @@ func TestLoad(t *testing.T) {
 			}
 			if cfg.Auth.SigningKey != tt.wantAuth.SigningKey {
 				t.Error("Auth signing key does not match expected value")
-			}
-			if cfg.Auth.Username != tt.wantAuth.Username {
-				t.Error("Auth username does not match expected value")
-			}
-			if cfg.Auth.PasswordHash != tt.wantAuth.PasswordHash {
-				t.Error("Auth password hash does not match expected value")
 			}
 			if cfg.Auth.AccessTTL != tt.wantAuth.AccessTTL {
 				t.Errorf(

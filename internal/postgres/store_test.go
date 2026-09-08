@@ -29,10 +29,17 @@ func TestUserAndSessionStore(t *testing.T) {
 		t.Fatalf("GenerateFromPassword() error = %v", err)
 	}
 
-	users := NewUserStore(pool)
-	if err := users.Upsert(ctx, username, string(passwordHash)); err != nil {
-		t.Fatalf("Upsert() error = %v", err)
+	if _, err := pool.Exec(
+		ctx,
+		`INSERT INTO users (id, username, password_hash) VALUES ($1, $2, $3)`,
+		fmt.Sprintf("id-%s", t.Name()),
+		username,
+		string(passwordHash),
+	); err != nil {
+		t.Fatalf("insert test user: %v", err)
 	}
+
+	users := NewUserStore(pool)
 
 	found, err := users.FindByUsername(ctx, username)
 	if err != nil {
@@ -119,9 +126,6 @@ func TestStoresHonorCanceledContext(t *testing.T) {
 	users := NewUserStore(pool)
 	if _, err := users.FindByUsername(ctx, "anyone"); !errors.Is(err, context.Canceled) {
 		t.Fatalf("FindByUsername() error = %v, want context.Canceled", err)
-	}
-	if err := users.Upsert(ctx, "anyone", "hash"); !errors.Is(err, context.Canceled) {
-		t.Fatalf("Upsert() error = %v, want context.Canceled", err)
 	}
 
 	sessions := NewSessionStore(pool)

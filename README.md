@@ -117,7 +117,7 @@ chat-agent/
 Copy-Item .env.example .env
 ```
 
-在 `.env` 中填写当前供应商对应的 API Key，并将 `DATABASE_URL` 改为 Linux 服务器上的 PostgreSQL 连接串（不要使用 `127.0.0.1`）。`.env` 已被 Git 忽略，禁止将真实密钥写入 `.env.example`。服务启动时会执行迁移，并用 `AUTH_USERNAME` / `AUTH_PASSWORD_HASH` 引导写入 `users` 表。登录与 Session 均读写远程数据库。
+在 `.env` 中填写当前供应商对应的 API Key，并将 `DATABASE_URL` 改为 Linux 服务器上的 PostgreSQL 连接串（不要使用 `127.0.0.1`）。`.env` 已被 Git 忽略，禁止将真实密钥写入 `.env.example`。服务启动时会执行迁移。登录凭据与 Session 均读写远程数据库，不要把登录账号或密码写入文档。
 
 ### 3. 选择模型
 
@@ -185,7 +185,7 @@ Idempotency-Key: <unique-per-send>
 
 ```json
 {
-  "session_id": "user-123",
+  "session_id": "session-1",
   "message": "帮我计算 128 * 39"
 }
 ```
@@ -220,8 +220,6 @@ Idempotency-Key: <unique-per-send>
 | `LLM_RETRY_MAX_INTERVAL` | `2s` | LLM 指数重试的最大间隔 |
 | `AGENT_MAX_STEPS` | `8` | 单次 Agent 运行允许的最大 LLM 决策次数 |
 | `DATABASE_URL` | 无 | 远程 PostgreSQL 连接串，必填；格式见 `docs/deploy-postgres-linux.md` |
-| `AUTH_USERNAME` | 无 | 启动时写入数据库的引导用户名，必填 |
-| `AUTH_PASSWORD_HASH` | 无 | 引导用户的 bcrypt 哈希，必填；不得配置密码明文。`.env` 中必须用单引号包裹，否则 `$` 会被展开导致哈希失效 |
 | `JWT_SECRET` | 无 | HS256 签名密钥，必填 |
 | `JWT_ACCESS_TTL` | `168h` | Access Token 有效期（7 天） |
 | `JWT_ISSUER` | `chat-agent` | JWT issuer |

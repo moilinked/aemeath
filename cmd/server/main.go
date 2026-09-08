@@ -49,9 +49,6 @@ func run() error {
 	}
 
 	userStore := postgres.NewUserStore(pool)
-	if err := userStore.Upsert(startCtx, cfg.Auth.Username, cfg.Auth.PasswordHash); err != nil {
-		return fmt.Errorf("bootstrap auth user: %w", err)
-	}
 
 	llmClient, err := newLLMClient(cfg.LLM)
 	if err != nil {

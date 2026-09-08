@@ -60,14 +60,12 @@ type AgentConfig struct {
 	MaxSteps int
 }
 
-// AuthConfig 包含启动时写入数据库的引导用户与 JWT Access Token 配置。
-// PasswordHash 和 SigningKey 只从环境变量读取，禁止写入日志或提交到版本控制。
+// AuthConfig 包含 JWT Access Token 配置。
+// SigningKey 只从环境变量读取，禁止写入日志或提交到版本控制。
 type AuthConfig struct {
-	Username     string
-	PasswordHash string
-	SigningKey   string
-	AccessTTL    time.Duration
-	Issuer       string
+	SigningKey string
+	AccessTTL  time.Duration
+	Issuer     string
 }
 
 // Config 包含 HTTP 服务、数据库、LLM、Agent 和认证配置。
@@ -284,15 +282,6 @@ func loadDatabaseURL() (string, error) {
 }
 
 func loadAuthConfig() (AuthConfig, error) {
-	username := strings.TrimSpace(os.Getenv("AUTH_USERNAME"))
-	if username == "" {
-		return AuthConfig{}, errors.New("AUTH_USERNAME is required")
-	}
-	passwordHash := os.Getenv("AUTH_PASSWORD_HASH")
-	if strings.TrimSpace(passwordHash) == "" {
-		return AuthConfig{}, errors.New("AUTH_PASSWORD_HASH is required")
-	}
-
 	signingKey := os.Getenv("JWT_SECRET")
 	if strings.TrimSpace(signingKey) == "" {
 		return AuthConfig{}, errors.New("JWT_SECRET is required")
@@ -315,10 +304,8 @@ func loadAuthConfig() (AuthConfig, error) {
 		return AuthConfig{}, errors.New("JWT_ISSUER is required")
 	}
 	return AuthConfig{
-		Username:     username,
-		PasswordHash: passwordHash,
-		SigningKey:   signingKey,
-		AccessTTL:    accessTTL,
-		Issuer:       issuer,
+		SigningKey: signingKey,
+		AccessTTL:  accessTTL,
+		Issuer:     issuer,
 	}, nil
 }

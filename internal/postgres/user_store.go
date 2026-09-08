@@ -2,21 +2,17 @@ package postgres
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/ecol/chat-agent/internal/auth"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"golang.org/x/crypto/bcrypt"
 )
 
 var _ auth.UserStore = (*UserStore)(nil)
 
-// UserStore 使用 PostgreSQL 持久化用户凭据。
+// UserStore 使用 PostgreSQL 读取用户凭据。
 type UserStore struct {
 	pool *pgxpool.Pool
 }
@@ -53,57 +49,4 @@ func (store *UserStore) FindByUsername(
 	}
 	user.PasswordHash = []byte(passwordHash)
 	return user, nil
-}
-
-// Upsert 将引导用户写入数据库；已存在时更新密码哈希。
-func (store *UserStore) Upsert(
-	ctx context.Context,
-	username string,
-	passwordHash string,
-) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	if store.pool == nil {
-		return errors.New("postgres pool is required")
-	}
-
-	username = strings.TrimSpace(username)
-	if username == "" {
-		return errors.New("auth username is required")
-	}
-	if _, err := bcrypt.Cost([]byte(passwordHash)); err != nil {
-		return errors.New("auth password hash must be a valid bcrypt hash")
-	}
-
-	userID, err := randomID()
-	if err != nil {
-		return fmt.Errorf("generate user id: %w", err)
-	}
-
-	_, err = store.pool.Exec(
-		ctx,
-		`
-		INSERT INTO users (id, username, password_hash)
-		VALUES ($1, $2, $3)
-		ON CONFLICT (username) DO UPDATE
-		SET password_hash = EXCLUDED.password_hash,
-		    updated_at = NOW()
-		`,
-		userID,
-		username,
-		passwordHash,
-	)
-	if err != nil {
-		return fmt.Errorf("upsert user: %w", err)
-	}
-	return nil
-}
-
-func randomID() (string, error) {
-	value := make([]byte, 16)
-	if _, err := rand.Read(value); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(value), nil
 }
