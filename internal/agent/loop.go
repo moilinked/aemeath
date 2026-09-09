@@ -11,8 +11,10 @@ import (
 )
 
 var (
-	// ErrSessionIDRequired 表示 Agent 请求缺少 Session ID。
-	ErrSessionIDRequired = errors.New("agent session ID is required")
+	// ErrConversationIDRequired 表示 Agent 请求缺少对话 ID。
+	ErrConversationIDRequired = errors.New("agent conversation ID is required")
+	// ErrConversationNotFound 表示对话不存在或不属于当前用户。
+	ErrConversationNotFound = errors.New("conversation not found")
 	// ErrUserMessageRequired 表示 Agent 请求缺少用户消息。
 	ErrUserMessageRequired = errors.New("agent user message is required")
 	// ErrMaxStepsExceeded 表示 Agent 在限制步数内未生成最终回答。
@@ -33,17 +35,17 @@ type Result struct {
 // Run 执行一次完整对话轮次，直到 LLM 返回最终回答或达到最大步数。
 func (agent *Agent) Run(
 	ctx context.Context,
-	sessionID string,
+	conversationID string,
 	userMessage string,
 ) (*Result, error) {
-	return agent.RunStream(ctx, sessionID, userMessage, nil)
+	return agent.RunStream(ctx, conversationID, userMessage, nil)
 }
 
 // RunStream 执行与 Run 相同的 Agent Loop，并通过 emit 回传增量、工具调用和工具结果。
 // 客户端断开导致的 context 取消会停止后续 LLM 请求和工具执行。
 func (agent *Agent) RunStream(
 	ctx context.Context,
-	sessionID string,
+	conversationID string,
 	userMessage string,
 	emit StreamHandler,
 ) (*Result, error) {
@@ -51,23 +53,23 @@ func (agent *Agent) RunStream(
 		return nil, err
 	}
 
-	sessionID = strings.TrimSpace(sessionID)
-	if sessionID == "" {
-		return nil, ErrSessionIDRequired
+	conversationID = strings.TrimSpace(conversationID)
+	if conversationID == "" {
+		return nil, ErrConversationIDRequired
 	}
 	if strings.TrimSpace(userMessage) == "" {
 		return nil, ErrUserMessageRequired
 	}
 
-	release, err := agent.acquireSession(ctx, sessionID)
+	release, err := agent.acquireConversation(ctx, conversationID)
 	if err != nil {
 		return nil, err
 	}
 	defer release()
 
-	history, err := agent.sessionStore.Load(ctx, sessionID)
+	history, err := agent.conversations.Load(ctx, conversationID)
 	if err != nil {
-		return nil, fmt.Errorf("load agent session %q: %w", sessionID, err)
+		return nil, fmt.Errorf("load agent conversation %q: %w", conversationID, err)
 	}
 
 	user := llm.Message{Role: llm.RoleUser, Content: userMessage}
@@ -117,8 +119,8 @@ func (agent *Agent) RunStream(
 					step,
 				)
 			}
-			if err := agent.sessionStore.Append(ctx, sessionID, turn...); err != nil {
-				return nil, fmt.Errorf("append agent session %q: %w", sessionID, err)
+			if err := agent.conversations.Append(ctx, conversationID, turn...); err != nil {
+				return nil, fmt.Errorf("append agent conversation %q: %w", conversationID, err)
 			}
 			return &Result{
 				Message: assistant.Content,
@@ -218,54 +220,54 @@ func emitStreamEvent(emit StreamHandler, event StreamEvent) error {
 	return emit(event)
 }
 
-type sessionGate struct {
+type conversationGate struct {
 	token chan struct{}
 	refs  int
 }
 
-func newSessionGate() *sessionGate {
-	gate := &sessionGate{token: make(chan struct{}, 1)}
+func newConversationGate() *conversationGate {
+	gate := &conversationGate{token: make(chan struct{}, 1)}
 	gate.token <- struct{}{}
 	return gate
 }
 
-func (agent *Agent) acquireSession(
+func (agent *Agent) acquireConversation(
 	ctx context.Context,
-	sessionID string,
+	conversationID string,
 ) (func(), error) {
-	agent.sessionGatesMu.Lock()
-	gate := agent.sessionGates[sessionID]
+	agent.conversationGatesMu.Lock()
+	gate := agent.conversationGates[conversationID]
 	if gate == nil {
-		gate = newSessionGate()
-		agent.sessionGates[sessionID] = gate
+		gate = newConversationGate()
+		agent.conversationGates[conversationID] = gate
 	}
 	gate.refs++
-	agent.sessionGatesMu.Unlock()
+	agent.conversationGatesMu.Unlock()
 
 	select {
 	case <-ctx.Done():
-		agent.releaseSessionGate(sessionID, gate)
+		agent.releaseConversationGate(conversationID, gate)
 		return nil, ctx.Err()
 	case <-gate.token:
 		if err := ctx.Err(); err != nil {
 			gate.token <- struct{}{}
-			agent.releaseSessionGate(sessionID, gate)
+			agent.releaseConversationGate(conversationID, gate)
 			return nil, err
 		}
 		return func() {
 			gate.token <- struct{}{}
-			agent.releaseSessionGate(sessionID, gate)
+			agent.releaseConversationGate(conversationID, gate)
 		}, nil
 	}
 }
 
-func (agent *Agent) releaseSessionGate(sessionID string, gate *sessionGate) {
-	agent.sessionGatesMu.Lock()
-	defer agent.sessionGatesMu.Unlock()
+func (agent *Agent) releaseConversationGate(conversationID string, gate *conversationGate) {
+	agent.conversationGatesMu.Lock()
+	defer agent.conversationGatesMu.Unlock()
 
 	gate.refs--
-	if gate.refs == 0 && agent.sessionGates[sessionID] == gate {
-		delete(agent.sessionGates, sessionID)
+	if gate.refs == 0 && agent.conversationGates[conversationID] == gate {
+		delete(agent.conversationGates, conversationID)
 	}
 }
 

@@ -7,8 +7,8 @@ import (
 
 	"github.com/ecol/chat-agent/internal/auth"
 	"github.com/ecol/chat-agent/internal/config"
+	"github.com/ecol/chat-agent/internal/conversation"
 	"github.com/ecol/chat-agent/internal/llm"
-	"github.com/ecol/chat-agent/internal/session"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -100,7 +100,7 @@ func TestNewAgent(t *testing.T) {
 			created, err := newAgent(
 				test.client,
 				config.AgentConfig{MaxSteps: test.maxSteps},
-				session.NewMemoryStore(),
+				conversation.NewMemoryStore(),
 			)
 			if test.wantErr {
 				if err == nil {

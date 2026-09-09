@@ -14,17 +14,18 @@ import (
 const maxChatRequestBodySize = 64 << 10
 
 type chatRequest struct {
-	SessionID string `json:"session_id"`
-	Message   string `json:"message"`
+	ConversationID string `json:"conversation_id"`
+	Message        string `json:"message"`
 }
 
 type chatResponse struct {
-	Message string `json:"message"`
+	ConversationID string `json:"conversation_id"`
+	Message        string `json:"message"`
 }
 
-func chat(runner ChatRunner, store *idempotencyStore) http.HandlerFunc {
+func chat(runner ChatRunner, conversations agent.ConversationStore, store *idempotencyStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		sessionID, message, key, record, ok := prepareChat(w, r, store)
+		conversationID, message, key, record, ok := prepareChat(w, r, conversations, store)
 		if !ok {
 			return
 		}
@@ -40,7 +41,7 @@ func chat(runner ChatRunner, store *idempotencyStore) http.HandlerFunc {
 			}
 		}()
 
-		result, err := runner.Run(r.Context(), sessionID, message)
+		result, err := runner.Run(r.Context(), conversationID, message)
 		if err != nil {
 			if errors.Is(err, context.Canceled) {
 				writeAPIError(w, http.StatusRequestTimeout, "chat request canceled")
@@ -62,7 +63,7 @@ func chat(runner ChatRunner, store *idempotencyStore) http.HandlerFunc {
 			return
 		}
 
-		body, err := encodeJSON(chatResponse{Message: result.Message})
+		body, err := encodeJSON(chatResponse{ConversationID: conversationID, Message: result.Message})
 		if err != nil {
 			writeAPIError(w, http.StatusInternalServerError, "chat completion failed")
 			return
@@ -76,29 +77,40 @@ func chat(runner ChatRunner, store *idempotencyStore) http.HandlerFunc {
 func prepareChat(
 	w http.ResponseWriter,
 	r *http.Request,
+	conversations agent.ConversationStore,
 	store *idempotencyStore,
-) (sessionID string, message string, key string, record idempotencyRecord, ok bool) {
+) (conversationID string, message string, key string, record idempotencyRecord, ok bool) {
 	var request chatRequest
 	if !decodeJSONBody(w, r, maxChatRequestBodySize, &request) {
 		return "", "", "", idempotencyRecord{}, false
 	}
 
-	sessionID = strings.TrimSpace(request.SessionID)
 	message = strings.TrimSpace(request.Message)
-	if sessionID == "" {
-		writeAPIError(w, http.StatusBadRequest, "session_id is required")
-		return "", "", "", idempotencyRecord{}, false
-	}
 	if message == "" {
 		writeAPIError(w, http.StatusBadRequest, "message is required")
 		return "", "", "", idempotencyRecord{}, false
 	}
 
 	identity, authenticated := identityFromContext(r.Context())
-	if !authenticated {
+	if !authenticated || ownerID(identity) == "" {
 		writeUnauthorized(w, "authentication required")
 		return "", "", "", idempotencyRecord{}, false
 	}
+
+	requestedID, err := parseConversationID(request.ConversationID)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "conversation_id is invalid")
+		return "", "", "", idempotencyRecord{}, false
+	}
+
+	userID := ownerID(identity)
+	if requestedID != "" {
+		if _, _, err := conversations.GetForUser(r.Context(), userID, requestedID); err != nil {
+			writeConversationError(w, err)
+			return "", "", "", idempotencyRecord{}, false
+		}
+	}
+
 	idempotencyKey, err := parseIdempotencyKey(r.Header.Get(idempotencyHeader))
 	if err != nil {
 		writeAPIError(w, http.StatusBadRequest, err.Error())
@@ -106,7 +118,7 @@ func prepareChat(
 	}
 
 	key = scopedIdempotencyKey(identity.Username, idempotencyKey)
-	record, err = store.Begin(key, chatPayloadHash(sessionID, message))
+	record, err = store.Begin(key, chatPayloadHash(requestedID, message))
 	if errors.Is(err, errIdempotencyInProgress) {
 		writeAPIError(w, http.StatusConflict, "chat request is already in progress")
 		return "", "", "", idempotencyRecord{}, false
@@ -119,7 +131,21 @@ func prepareChat(
 		writeAPIError(w, http.StatusInternalServerError, "chat completion failed")
 		return "", "", "", idempotencyRecord{}, false
 	}
-	return sessionID, message, key, record, true
+	if record.Cached {
+		return requestedID, message, key, record, true
+	}
+
+	conversationID = requestedID
+	if conversationID == "" {
+		created, err := conversations.Create(r.Context(), userID, conversationTitle(message))
+		if err != nil {
+			store.Abort(key)
+			writeConversationError(w, err)
+			return "", "", "", idempotencyRecord{}, false
+		}
+		conversationID = created.ID
+	}
+	return conversationID, message, key, record, true
 }
 
 func writeCachedChatError(
@@ -146,8 +172,10 @@ func mapChatError(err error) (int, string) {
 		return http.StatusRequestTimeout, "chat request canceled"
 	case errors.Is(err, context.DeadlineExceeded):
 		return http.StatusGatewayTimeout, "chat request timed out"
-	case errors.Is(err, agent.ErrSessionIDRequired):
-		return http.StatusBadRequest, "session_id is required"
+	case errors.Is(err, agent.ErrConversationNotFound):
+		return http.StatusNotFound, "conversation not found"
+	case errors.Is(err, agent.ErrConversationIDRequired):
+		return http.StatusBadRequest, "conversation_id is required"
 	case errors.Is(err, agent.ErrUserMessageRequired):
 		return http.StatusBadRequest, "message is required"
 	case errors.Is(err, agent.ErrMaxStepsExceeded):

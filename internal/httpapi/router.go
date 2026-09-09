@@ -15,10 +15,10 @@ import (
 
 // ChatRunner 是 HTTP 聊天边界依赖的最小 Agent 能力。
 type ChatRunner interface {
-	Run(ctx context.Context, sessionID string, userMessage string) (*agent.Result, error)
+	Run(ctx context.Context, conversationID string, userMessage string) (*agent.Result, error)
 	RunStream(
 		ctx context.Context,
-		sessionID string,
+		conversationID string,
 		userMessage string,
 		emit agent.StreamHandler,
 	) (*agent.Result, error)
@@ -26,8 +26,9 @@ type ChatRunner interface {
 
 // Dependencies 包含 HTTP 层后续处理请求所需的应用依赖。
 type Dependencies struct {
-	Agent ChatRunner
-	Auth  AuthService
+	Agent         ChatRunner
+	Auth          AuthService
+	Conversations agent.ConversationStore
 }
 
 // NewRouter 创建根 HTTP Handler，并校验启动所需依赖。
@@ -37,6 +38,9 @@ func NewRouter(dependencies Dependencies) (http.Handler, error) {
 	}
 	if dependencies.Auth == nil {
 		return nil, errors.New("auth service is required")
+	}
+	if dependencies.Conversations == nil {
+		return nil, errors.New("conversation store is required")
 	}
 
 	router := chi.NewRouter()
@@ -52,8 +56,11 @@ func NewRouter(dependencies Dependencies) (http.Handler, error) {
 	router.Route("/api", func(api chi.Router) {
 		api.Use(requireBearer(dependencies.Auth))
 		api.Get("/auth/me", me)
-		api.Post("/chat", chat(dependencies.Agent, idempotency))
-		api.Post("/chat/stream", chatStream(dependencies.Agent, idempotency))
+		api.Get("/conversations", listConversations(dependencies.Conversations))
+		api.Get("/conversations/{conversationID}", getConversation(dependencies.Conversations))
+		api.Delete("/conversations/{conversationID}", deleteConversation(dependencies.Conversations))
+		api.Post("/chat", chat(dependencies.Agent, dependencies.Conversations, idempotency))
+		api.Post("/chat/stream", chatStream(dependencies.Agent, dependencies.Conversations, idempotency))
 	})
 
 	return router, nil

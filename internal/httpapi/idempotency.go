@@ -130,7 +130,7 @@ func scopedIdempotencyKey(username, key string) string {
 	return username + "\x1f" + key
 }
 
-func chatPayloadHash(sessionID, message string) string {
-	sum := sha256.Sum256([]byte(sessionID + "\n" + message))
+func chatPayloadHash(conversationID, message string) string {
+	sum := sha256.Sum256([]byte(conversationID + "\n" + message))
 	return hex.EncodeToString(sum[:])
 }

@@ -11,9 +11,9 @@ import (
 	"github.com/ecol/chat-agent/internal/agent"
 )
 
-func chatStream(runner ChatRunner, store *idempotencyStore) http.HandlerFunc {
+func chatStream(runner ChatRunner, conversations agent.ConversationStore, store *idempotencyStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		sessionID, message, key, record, ok := prepareChat(w, r, store)
+		conversationID, message, key, record, ok := prepareChat(w, r, conversations, store)
 		if !ok {
 			return
 		}
@@ -42,7 +42,7 @@ func chatStream(runner ChatRunner, store *idempotencyStore) http.HandlerFunc {
 		w.WriteHeader(http.StatusOK)
 		flusher.Flush()
 
-		result, err := runner.RunStream(r.Context(), sessionID, message, func(event agent.StreamEvent) error {
+		result, err := runner.RunStream(r.Context(), conversationID, message, func(event agent.StreamEvent) error {
 			if err := r.Context().Err(); err != nil {
 				return err
 			}
@@ -61,12 +61,12 @@ func chatStream(runner ChatRunner, store *idempotencyStore) http.HandlerFunc {
 			return
 		}
 
-		body, err := encodeJSON(chatResponse{Message: result.Message})
+		body, err := encodeJSON(chatResponse{ConversationID: conversationID, Message: result.Message})
 		if err != nil {
 			_ = writeSSEEvent(w, flusher, "error", map[string]string{"error": "chat completion failed"})
 			return
 		}
-		if err := writeSSEEvent(w, flusher, "done", chatResponse{Message: result.Message}); err != nil {
+		if err := writeSSEEvent(w, flusher, "done", chatResponse{ConversationID: conversationID, Message: result.Message}); err != nil {
 			return
 		}
 		store.Complete(key, http.StatusOK, body)
@@ -93,7 +93,10 @@ func writeCachedChatStream(w http.ResponseWriter, record idempotencyRecord) {
 	}
 	writeSSEHeaders(w)
 	w.WriteHeader(http.StatusOK)
-	_ = writeSSEEvent(w, flusher, "done", chatResponse{Message: response.Message})
+	_ = writeSSEEvent(w, flusher, "done", chatResponse{
+		ConversationID: response.ConversationID,
+		Message:        response.Message,
+	})
 }
 
 func writeAgentStreamEvent(w http.ResponseWriter, flusher http.Flusher, event agent.StreamEvent) error {

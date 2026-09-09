@@ -16,24 +16,26 @@
 - 工具调用、DeepSeek 思考内容和 Token Usage 数据结构
 - 配置与 LLM Client 单元测试
 - 版本受控、供应商无关的默认 System Prompt
-- `SessionStore` 接口、内存实现与 PostgreSQL 持久化
+- `ConversationStore` 接口、内存实现与 PostgreSQL 持久化
 - `Tool` 接口与并发安全、顺序稳定的 Tool Registry
 - 支持基础四则运算、括号和科学计数法的 Calculator Tool
 - 使用 Open-Meteo、无需 API Key 的 Weather Tool
-- 组合 LLM、Session 和 Tools，并限制最大执行步数的 Agent
-- 支持工具错误回传、Token 汇总和会话持久化的 Agent Loop
+- 组合 LLM、Conversation 和 Tools，并限制最大执行步数的 Agent
+- 支持工具错误回传、Token 汇总和对话持久化的 Agent Loop
 - PostgreSQL 用户存储、bcrypt 密码校验与 Bearer JWT 路由保护
 - 受登录保护的 `POST /api/chat`、SSE 流式 `POST /api/chat/stream`、Agent 错误映射与聊天幂等
+- 对话是服务端资源：省略 `conversation_id` 会新开对话，带上已有 ID 则续聊
+- `GET /api/conversations` 与 `GET /api/conversations/{id}` 列出、读取当前用户的对话
 - LLM 与天气请求对 429/5xx 等可恢复错误进行指数重试
 
-当前已提供受 JWT 保护的 `POST /api/chat` 与 SSE 流式 `POST /api/chat/stream`，尚未实现 Web UI。
+当前已提供受 JWT 保护的 Chat API。客户端应保存服务端返回的 `conversation_id`（或刷新后从对话列表恢复），尚未实现 Web UI。
 
 ## MVP 目标
 
 第一阶段目标是实现一个不依赖 Agent Framework 的 Chat Agent Runtime，支持：
 
 - 基础问答与 System Prompt
-- 基于 Session ID 的多轮上下文
+- 基于服务端 `conversation_id` 的多轮上下文
 - Tool Calling 与本地工具执行
 - 带最大执行步数的 Agent Loop
 - JSON 与 SSE 流式 Chat HTTP API
@@ -54,7 +56,7 @@ Chat Handler
   ▼
 Agent Runtime
   ├── LLM Client
-  ├── Session Store
+  ├── Conversation Store
   ├── Tool Registry
   ├── System Prompt
   └── Agent Loop
@@ -66,10 +68,10 @@ Agent Runtime
 各模块保持单向依赖：
 
 - `httpapi` 只负责 HTTP 请求、响应和错误映射。
-- `agent` 负责编排 Prompt、Session、LLM 和 Tools。
+- `agent` 负责编排 Prompt、Conversation、LLM 和 Tools。
 - `llm` 隔离具体模型供应商协议。
-- `session` 负责对话历史；生产使用 PostgreSQL，测试仍可使用内存存储。
-- `postgres` 负责连接池、迁移、UserStore 与 SessionStore 实现。
+- `conversation` 负责对话历史；生产使用 PostgreSQL，测试仍可使用内存存储。
+- `postgres` 负责连接池、迁移、UserStore 与 ConversationStore 实现。
 - `tools` 负责工具契约、注册和执行。
 - `config` 统一加载环境配置，业务包不直接读取 `.env`。
 
@@ -90,11 +92,12 @@ chat-agent/
 │   │   ├── openai_compatible.go
 │   │   └── types.go
 │   ├── postgres/
-│   ├── session/
+│   ├── conversation/
 │   ├── tools/
 │   └── server/
 ├── docker-compose.yml
 ├── docs/
+│   ├── api.md
 │   └── deploy-postgres-linux.md
 ├── .env.example
 ├── go.mod
@@ -117,7 +120,7 @@ chat-agent/
 Copy-Item .env.example .env
 ```
 
-在 `.env` 中填写当前供应商对应的 API Key，并将 `DATABASE_URL` 改为 Linux 服务器上的 PostgreSQL 连接串（不要使用 `127.0.0.1`）。`.env` 已被 Git 忽略，禁止将真实密钥写入 `.env.example`。服务启动时会执行迁移。登录凭据与 Session 均读写远程数据库，不要把登录账号或密码写入文档。
+在 `.env` 中填写当前供应商对应的 API Key，并将 `DATABASE_URL` 改为 Linux 服务器上的 PostgreSQL 连接串（不要使用 `127.0.0.1`）。`.env` 已被 Git 忽略，禁止将真实密钥写入 `.env.example`。服务启动时会执行迁移。登录凭据与对话均读写远程数据库，不要把登录账号或密码写入文档。
 
 ### 3. 选择模型
 
@@ -165,109 +168,50 @@ Invoke-RestMethod http://localhost:8080/healthz
 
 ## HTTP API
 
-### 健康检查
+完整请求/响应、错误码、幂等和 SSE 解析见 [docs/api.md](docs/api.md)。
 
-```text
-GET /healthz
-```
+公开接口：`GET /healthz`、`POST /api/auth/login`。其余 `/api/*` 需要 `Authorization: Bearer <access_token>`。`POST /api/chat` 与 `POST /api/chat/stream` 还必须带 `Idempotency-Key`。
 
-### 当前用户
-
-```text
-GET /api/auth/me
-Authorization: Bearer <access_token>
-```
-
-根据 Access Token 查询当前登录用户的公开资料。Token 缺失、无效或过期时返回 `401`。响应不含密码或密码哈希。
-
-```json
-{
-  "id": "<user_id>",
-  "username": "<username>",
-  "created_at": "<rfc3339>",
-  "updated_at": "<rfc3339>"
-}
-```
-
-### Chat API
-
-```text
-POST /api/chat
-Authorization: Bearer <access_token>
-Idempotency-Key: <unique-per-send>
-```
-
-该接口位于受保护的 `/api` 路由下，必须携带有效 Access Token 和 `Idempotency-Key`。前端应对每一次用户发送生成稳定键（例如 UUID），超时重试时复用同一把键，避免重复执行 Agent、重复消耗 Token。`GET /healthz` 和 `POST /api/auth/login` 保持公开。
-
-请求：
-
-```json
-{
-  "session_id": "session-1",
-  "message": "帮我计算 128 * 39"
-}
-```
-
-成功响应：
-
-```json
-{
-  "message": "128 × 39 = 4992"
-}
-```
-
-缺少 `session_id`、`message` 或合法 `Idempotency-Key` 时返回 `400`；未登录或 Token 无效时返回 `401`。同一用户复用相同键且请求内容一致时，直接返回首次结果；请求仍在处理中，或同一键被用于不同 `session_id`/`message`，返回 `409`。幂等记录保存在进程内存中，默认 24 小时。客户端断开导致的取消不会写入幂等缓存，允许随后用同一把键重新请求。
-
-### Chat SSE
-
-```text
-POST /api/chat/stream
-Authorization: Bearer <access_token>
-Idempotency-Key: <unique-per-send>
-```
-
-请求体与 `POST /api/chat` 相同。成功时 HTTP 状态为 `200`，`Content-Type` 为 `text/event-stream`。客户端断开连接会取消本次 Agent 运行，并停止后续 LLM 与工具调用。
-
-| event | data | 说明 |
-| --- | --- | --- |
-| `delta` | `{"content":"..."}` | 最终回答增量 |
-| `reasoning` | `{"content":"..."}` | 模型思考内容增量 |
-| `tool_call` | `{"id":"...","name":"...","arguments":"..."}` | 模型决定调用工具 |
-| `tool_result` | `{"id":"...","name":"...","content":"..."}` | 本地工具执行结果 |
-| `done` | `{"message":"..."}` | 完整最终回答，流结束 |
-| `error` | `{"error":"..."}` | 流开始后的失败 |
-
-参数校验失败仍返回 JSON 错误（如 `400`/`401`/`409`）。同一把 `Idempotency-Key` 在成功后重放时，会直接发送 `done` 事件。
+| 方法     | 路径                      | 说明                                          |
+| -------- | ------------------------- | --------------------------------------------- |
+| `GET`    | `/healthz`                | 健康检查                                      |
+| `POST`   | `/api/auth/login`         | 登录                                          |
+| `GET`    | `/api/auth/me`            | 当前用户（不含对话 ID）                       |
+| `GET`    | `/api/conversations`      | 当前用户对话列表                              |
+| `GET`    | `/api/conversations/{id}` | 对话详情与消息历史                            |
+| `DELETE` | `/api/conversations/{id}` | 删除对话                                      |
+| `POST`   | `/api/chat`               | 非流式发送；省略 `conversation_id` 会新开对话 |
+| `POST`   | `/api/chat/stream`        | SSE 流式发送，请求体与 `/api/chat` 相同       |
 
 ## 环境变量
 
 系统环境变量优先级高于 `.env`。
 
-| 环境变量 | 默认值 | 说明 |
-| --- | --- | --- |
-| `SERVER_PORT` | `8080` | HTTP 监听端口，范围为 `1-65535` |
-| `SERVER_ADDRESS` | 无 | 完整 HTTP 监听地址；设置后优先于 `SERVER_PORT` |
-| `SERVER_READ_HEADER_TIMEOUT` | `5s` | 请求头读取超时 |
-| `SERVER_READ_TIMEOUT` | `15s` | 请求读取超时 |
-| `SERVER_WRITE_TIMEOUT` | `30s` | 响应写入超时 |
-| `SERVER_IDLE_TIMEOUT` | `60s` | 空闲连接超时 |
-| `SERVER_SHUTDOWN_TIMEOUT` | `10s` | 优雅关闭超时 |
-| `LLM_PROVIDER` | `deepseek` | `openai` 或 `deepseek` |
-| `LLM_REQUEST_TIMEOUT` | `60s` | 单次 LLM 请求超时 |
-| `LLM_RETRY_MAX_ATTEMPTS` | `3` | LLM 可恢复错误的最大尝试次数，含首次请求 |
-| `LLM_RETRY_INITIAL_INTERVAL` | `200ms` | LLM 指数重试的初始间隔 |
-| `LLM_RETRY_MAX_INTERVAL` | `2s` | LLM 指数重试的最大间隔 |
-| `AGENT_MAX_STEPS` | `8` | 单次 Agent 运行允许的最大 LLM 决策次数 |
-| `DATABASE_URL` | 无 | 远程 PostgreSQL 连接串，必填；格式见 `docs/deploy-postgres-linux.md` |
-| `JWT_SECRET` | 无 | HS256 签名密钥，必填 |
-| `JWT_ACCESS_TTL` | `168h` | Access Token 有效期（7 天） |
-| `JWT_ISSUER` | `chat-agent` | JWT issuer |
-| `OPENAI_API_KEY` | 无 | OpenAI 或兼容网关密钥 |
-| `OPENAI_BASE_URL` | `https://api.openai.com/v1` | OpenAI 兼容基础地址 |
-| `OPENAI_MODEL` | 无 | 网关提供的模型 ID |
-| `DEEPSEEK_API_KEY` | 无 | DeepSeek 密钥 |
-| `DEEPSEEK_BASE_URL` | `https://api.deepseek.com` | DeepSeek 基础地址 |
-| `DEEPSEEK_MODEL` | `deepseek-v4-pro` | DeepSeek V4 模型 ID |
+| 环境变量                     | 默认值                      | 说明                                                                 |
+| ---------------------------- | --------------------------- | -------------------------------------------------------------------- |
+| `SERVER_PORT`                | `8080`                      | HTTP 监听端口，范围为 `1-65535`                                      |
+| `SERVER_ADDRESS`             | 无                          | 完整 HTTP 监听地址；设置后优先于 `SERVER_PORT`                       |
+| `SERVER_READ_HEADER_TIMEOUT` | `5s`                        | 请求头读取超时                                                       |
+| `SERVER_READ_TIMEOUT`        | `15s`                       | 请求读取超时                                                         |
+| `SERVER_WRITE_TIMEOUT`       | `30s`                       | 响应写入超时                                                         |
+| `SERVER_IDLE_TIMEOUT`        | `60s`                       | 空闲连接超时                                                         |
+| `SERVER_SHUTDOWN_TIMEOUT`    | `10s`                       | 优雅关闭超时                                                         |
+| `LLM_PROVIDER`               | `deepseek`                  | `openai` 或 `deepseek`                                               |
+| `LLM_REQUEST_TIMEOUT`        | `60s`                       | 单次 LLM 请求超时                                                    |
+| `LLM_RETRY_MAX_ATTEMPTS`     | `3`                         | LLM 可恢复错误的最大尝试次数，含首次请求                             |
+| `LLM_RETRY_INITIAL_INTERVAL` | `200ms`                     | LLM 指数重试的初始间隔                                               |
+| `LLM_RETRY_MAX_INTERVAL`     | `2s`                        | LLM 指数重试的最大间隔                                               |
+| `AGENT_MAX_STEPS`            | `8`                         | 单次 Agent 运行允许的最大 LLM 决策次数                               |
+| `DATABASE_URL`               | 无                          | 远程 PostgreSQL 连接串，必填；格式见 `docs/deploy-postgres-linux.md` |
+| `JWT_SECRET`                 | 无                          | HS256 签名密钥，必填                                                 |
+| `JWT_ACCESS_TTL`             | `168h`                      | Access Token 有效期（7 天）                                          |
+| `JWT_ISSUER`                 | `chat-agent`                | JWT issuer                                                           |
+| `OPENAI_API_KEY`             | 无                          | OpenAI 或兼容网关密钥                                                |
+| `OPENAI_BASE_URL`            | `https://api.openai.com/v1` | OpenAI 兼容基础地址                                                  |
+| `OPENAI_MODEL`               | 无                          | 网关提供的模型 ID                                                    |
+| `DEEPSEEK_API_KEY`           | 无                          | DeepSeek 密钥                                                        |
+| `DEEPSEEK_BASE_URL`          | `https://api.deepseek.com`  | DeepSeek 基础地址                                                    |
+| `DEEPSEEK_MODEL`             | `deepseek-v4-pro`           | DeepSeek V4 模型 ID                                                  |
 
 ## 开发与验证
 
@@ -278,7 +222,7 @@ go test -count=1 ./...
 go build ./cmd/server
 ```
 
-PostgreSQL 用户与 Session 存储测试默认跳过。应对准独立测试库，不要使用生产数据库：
+PostgreSQL 用户与对话存储测试默认跳过。应对准独立测试库，不要使用生产数据库：
 
 ```powershell
 $env:TEST_DATABASE_URL = "postgres://chat_agent:chat_agent@127.0.0.1:5432/chat_agent?sslmode=disable"
@@ -308,8 +252,8 @@ go test -tags=integration -run "^TestDeepSeekConnectivity$" -count=1 ./internal/
 ### Chat Agent MVP
 
 - [x] 定义 System Prompt
-- [x] 定义 `SessionStore` 接口
-- [x] 实现并发安全的内存 Session Store
+- [x] 定义 `ConversationStore` 接口
+- [x] 实现并发安全的内存 Conversation Store
 - [x] 定义 `Tool` 接口与 Tool Registry
 - [x] 实现 Calculator Tool
 - [x] 实现 Weather Tool
@@ -325,7 +269,8 @@ go test -tags=integration -run "^TestDeepSeekConnectivity$" -count=1 ./internal/
 - [x] Web Chat UI
 - [x] SSE 流式响应
 - [x] SSE 支持客户端主动断开并取消本次 Chat，停止后续 LLM 与工具调用
-- [x] PostgreSQL Session 持久化
+- [x] PostgreSQL Conversation 持久化
+- [x] 对话由服务端生成 ID；省略 ID 新开对话，带上已有 ID 续聊
 - [ ] 上下文裁剪和 Token 预算
 - [ ] Tracing 与 Evals
 - [ ] RAG 与搜索工具

@@ -8,13 +8,14 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/ecol/chat-agent/internal/agent"
 	"github.com/ecol/chat-agent/internal/auth"
 	"github.com/ecol/chat-agent/internal/llm"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/crypto/bcrypt"
 )
 
-func TestUserAndSessionStore(t *testing.T) {
+func TestUserAndConversationStore(t *testing.T) {
 	pool := testPool(t)
 	t.Cleanup(pool.Close)
 
@@ -64,18 +65,11 @@ func TestUserAndSessionStore(t *testing.T) {
 		t.Fatalf("FindByUsername() missing error = %v, want ErrUserNotFound", err)
 	}
 
-	sessions := NewSessionStore(pool)
-	sessionID := fmt.Sprintf("session-%s", t.Name())
-	if err := sessions.Delete(ctx, sessionID); err != nil {
-		t.Fatalf("Delete() cleanup error = %v", err)
-	}
-
-	missing, err := sessions.Load(ctx, sessionID)
+	conversations := NewConversationStore(pool)
+	userID := fmt.Sprintf("id-%s", t.Name())
+	created, err := conversations.Create(ctx, userID, "hello")
 	if err != nil {
-		t.Fatalf("Load() missing error = %v", err)
-	}
-	if len(missing) != 0 {
-		t.Fatalf("Load() missing length = %d, want 0", len(missing))
+		t.Fatalf("Create() error = %v", err)
 	}
 
 	first := llm.Message{Role: llm.RoleUser, Content: "hello"}
@@ -92,14 +86,14 @@ func TestUserAndSessionStore(t *testing.T) {
 			},
 		},
 	}
-	if err := sessions.Append(ctx, sessionID, first); err != nil {
+	if err := conversations.Append(ctx, created.ID, first); err != nil {
 		t.Fatalf("Append() first error = %v", err)
 	}
-	if err := sessions.Append(ctx, sessionID, second); err != nil {
+	if err := conversations.Append(ctx, created.ID, second); err != nil {
 		t.Fatalf("Append() second error = %v", err)
 	}
 
-	got, err := sessions.Load(ctx, sessionID)
+	got, err := conversations.Load(ctx, created.ID)
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
@@ -108,15 +102,44 @@ func TestUserAndSessionStore(t *testing.T) {
 		t.Fatalf("Load() = %#v, want %#v", got, want)
 	}
 
-	if err := sessions.Delete(ctx, sessionID); err != nil {
-		t.Fatalf("Delete() error = %v", err)
-	}
-	cleared, err := sessions.Load(ctx, sessionID)
+	item, messages, err := conversations.GetForUser(ctx, userID, created.ID)
 	if err != nil {
-		t.Fatalf("Load() after delete error = %v", err)
+		t.Fatalf("GetForUser() error = %v", err)
 	}
-	if len(cleared) != 0 {
-		t.Fatalf("Load() after delete length = %d, want 0", len(cleared))
+	if item.ID != created.ID || item.Title != "hello" {
+		t.Fatalf("GetForUser() conversation = %#v", item)
+	}
+	if !reflect.DeepEqual(messages, want) {
+		t.Fatalf("GetForUser() messages = %#v, want %#v", messages, want)
+	}
+
+	otherID := fmt.Sprintf("other-%s", t.Name())
+	if _, err := pool.Exec(
+		ctx,
+		`INSERT INTO users (id, username, password_hash) VALUES ($1, $2, $3)`,
+		otherID,
+		fmt.Sprintf("other-%s", t.Name()),
+		string(passwordHash),
+	); err != nil {
+		t.Fatalf("insert other test user: %v", err)
+	}
+	if _, _, err := conversations.GetForUser(ctx, otherID, created.ID); !errors.Is(err, agent.ErrConversationNotFound) {
+		t.Fatalf("GetForUser() foreign error = %v, want ErrConversationNotFound", err)
+	}
+
+	listed, err := conversations.ListForUser(ctx, userID)
+	if err != nil {
+		t.Fatalf("ListForUser() error = %v", err)
+	}
+	if len(listed) != 1 || listed[0].ID != created.ID {
+		t.Fatalf("ListForUser() = %#v", listed)
+	}
+
+	if err := conversations.DeleteForUser(ctx, userID, created.ID); err != nil {
+		t.Fatalf("DeleteForUser() error = %v", err)
+	}
+	if _, _, err := conversations.GetForUser(ctx, userID, created.ID); !errors.Is(err, agent.ErrConversationNotFound) {
+		t.Fatalf("GetForUser() after delete error = %v, want ErrConversationNotFound", err)
 	}
 }
 
@@ -135,18 +158,27 @@ func TestStoresHonorCanceledContext(t *testing.T) {
 		t.Fatalf("FindByUsername() error = %v, want context.Canceled", err)
 	}
 
-	sessions := NewSessionStore(pool)
-	if _, err := sessions.Load(ctx, "session"); !errors.Is(err, context.Canceled) {
+	conversations := NewConversationStore(pool)
+	if _, err := conversations.Load(ctx, "conversation"); !errors.Is(err, context.Canceled) {
 		t.Fatalf("Load() error = %v, want context.Canceled", err)
 	}
-	if err := sessions.Append(ctx, "session", llm.Message{Role: llm.RoleUser, Content: "x"}); !errors.Is(
+	if err := conversations.Append(ctx, "conversation", llm.Message{Role: llm.RoleUser, Content: "x"}); !errors.Is(
 		err,
 		context.Canceled,
 	) {
 		t.Fatalf("Append() error = %v, want context.Canceled", err)
 	}
-	if err := sessions.Delete(ctx, "session"); !errors.Is(err, context.Canceled) {
-		t.Fatalf("Delete() error = %v, want context.Canceled", err)
+	if _, err := conversations.Create(ctx, "user", "title"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Create() error = %v, want context.Canceled", err)
+	}
+	if _, _, err := conversations.GetForUser(ctx, "user", "conversation"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("GetForUser() error = %v, want context.Canceled", err)
+	}
+	if _, err := conversations.ListForUser(ctx, "user"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("ListForUser() error = %v, want context.Canceled", err)
+	}
+	if err := conversations.DeleteForUser(ctx, "user", "conversation"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("DeleteForUser() error = %v, want context.Canceled", err)
 	}
 }
 

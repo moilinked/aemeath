@@ -12,21 +12,21 @@ import (
 //
 // MaxSteps 表示单次运行允许的最大 LLM 决策次数，必须大于零。
 type Config struct {
-	LLM      llm.Client
-	Sessions SessionStore
-	Tools    *tools.Registry
-	MaxSteps int
+	LLM           llm.Client
+	Conversations ConversationStore
+	Tools         *tools.Registry
+	MaxSteps      int
 }
 
-// Agent 编排 System Prompt、会话、LLM 和工具。
+// Agent 编排 System Prompt、对话、LLM 和工具。
 type Agent struct {
-	llmClient      llm.Client
-	sessionStore   SessionStore
-	toolRegistry   *tools.Registry
-	systemMessage  llm.Message
-	maxSteps       int
-	sessionGatesMu sync.Mutex
-	sessionGates   map[string]*sessionGate
+	llmClient           llm.Client
+	conversations       ConversationStore
+	toolRegistry        *tools.Registry
+	systemMessage       llm.Message
+	maxSteps            int
+	conversationGatesMu sync.Mutex
+	conversationGates   map[string]*conversationGate
 }
 
 // New 创建 Agent，并校验所有运行依赖和执行边界。
@@ -34,8 +34,8 @@ func New(config Config) (*Agent, error) {
 	if config.LLM == nil {
 		return nil, errors.New("agent LLM client is required")
 	}
-	if config.Sessions == nil {
-		return nil, errors.New("agent session store is required")
+	if config.Conversations == nil {
+		return nil, errors.New("agent conversation store is required")
 	}
 	if config.Tools == nil {
 		return nil, errors.New("agent tool registry is required")
@@ -45,12 +45,12 @@ func New(config Config) (*Agent, error) {
 	}
 
 	return &Agent{
-		llmClient:     config.LLM,
-		sessionStore:  config.Sessions,
-		toolRegistry:  config.Tools,
-		systemMessage: SystemMessage(),
-		maxSteps:      config.MaxSteps,
-		sessionGates:  make(map[string]*sessionGate),
+		llmClient:         config.LLM,
+		conversations:     config.Conversations,
+		toolRegistry:      config.Tools,
+		systemMessage:     SystemMessage(),
+		maxSteps:          config.MaxSteps,
+		conversationGates: make(map[string]*conversationGate),
 	}, nil
 }
 

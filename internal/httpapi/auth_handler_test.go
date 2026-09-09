@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/ecol/chat-agent/internal/auth"
+	"github.com/ecol/chat-agent/internal/conversation"
 	"github.com/golang-jwt/jwt/v5"
 )
 
@@ -95,6 +96,9 @@ func TestLoginAndMe(t *testing.T) {
 	meBody := meRecorder.Body.String()
 	if strings.Contains(meBody, "password") {
 		t.Fatal("me response exposes password material")
+	}
+	if strings.Contains(meBody, "session_id") || strings.Contains(meBody, "conversation_id") {
+		t.Fatal("me response must not include a conversation id")
 	}
 
 	var currentUser currentUserResponse
@@ -334,8 +338,9 @@ func newAuthTestRouter(t *testing.T) http.Handler {
 	t.Helper()
 
 	router, err := NewRouter(Dependencies{
-		Agent: newHTTPTestAgent(t),
-		Auth:  newHTTPTestAuth(t),
+		Agent:         newHTTPTestAgent(t),
+		Auth:          newHTTPTestAuth(t),
+		Conversations: conversation.NewMemoryStore(),
 	})
 	if err != nil {
 		t.Fatalf("NewRouter() error = %v", err)

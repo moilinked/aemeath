@@ -55,7 +55,8 @@ func run() error {
 		return err
 	}
 
-	chatAgent, err := newAgent(llmClient, cfg.Agent, postgres.NewSessionStore(pool))
+	conversations := postgres.NewConversationStore(pool)
+	chatAgent, err := newAgent(llmClient, cfg.Agent, conversations)
 	if err != nil {
 		return err
 	}
@@ -66,8 +67,9 @@ func run() error {
 	}
 
 	router, err := httpapi.NewRouter(httpapi.Dependencies{
-		Agent: chatAgent,
-		Auth:  authService,
+		Agent:         chatAgent,
+		Auth:          authService,
+		Conversations: conversations,
 	})
 	if err != nil {
 		return fmt.Errorf("create HTTP router: %w", err)
@@ -108,7 +110,7 @@ func newLLMClient(cfg config.LLMConfig) (llm.Client, error) {
 func newAgent(
 	llmClient llm.Client,
 	cfg config.AgentConfig,
-	sessions agent.SessionStore,
+	conversations agent.ConversationStore,
 ) (*agent.Agent, error) {
 	toolRegistry, err := tools.NewRegistry(
 		tools.NewCalculatorTool(),
@@ -119,10 +121,10 @@ func newAgent(
 	}
 
 	chatAgent, err := agent.New(agent.Config{
-		LLM:      llmClient,
-		Sessions: sessions,
-		Tools:    toolRegistry,
-		MaxSteps: cfg.MaxSteps,
+		LLM:           llmClient,
+		Conversations: conversations,
+		Tools:         toolRegistry,
+		MaxSteps:      cfg.MaxSteps,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create agent: %w", err)

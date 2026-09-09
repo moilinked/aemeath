@@ -27,30 +27,42 @@ func (client *stubLLMClient) ChatStream(
 	return llm.ChatStreamFromChat(ctx, client.Chat, request, emit)
 }
 
-type stubSessionStore struct{}
+type stubConversationStore struct{}
 
-func (store *stubSessionStore) Load(context.Context, string) ([]llm.Message, error) {
+func (store *stubConversationStore) Load(context.Context, string) ([]llm.Message, error) {
 	return nil, nil
 }
 
-func (store *stubSessionStore) Append(context.Context, string, ...llm.Message) error {
+func (store *stubConversationStore) Append(context.Context, string, ...llm.Message) error {
 	return nil
 }
 
-func (store *stubSessionStore) Delete(context.Context, string) error {
+func (store *stubConversationStore) Create(context.Context, string, string) (Conversation, error) {
+	return Conversation{}, nil
+}
+
+func (store *stubConversationStore) GetForUser(context.Context, string, string) (Conversation, []llm.Message, error) {
+	return Conversation{}, nil, nil
+}
+
+func (store *stubConversationStore) ListForUser(context.Context, string) ([]Conversation, error) {
+	return nil, nil
+}
+
+func (store *stubConversationStore) DeleteForUser(context.Context, string, string) error {
 	return nil
 }
 
 func TestNew(t *testing.T) {
 	llmClient := &stubLLMClient{}
-	sessionStore := &stubSessionStore{}
+	store := &stubConversationStore{}
 	toolRegistry := newTestToolRegistry(t)
 
 	created, err := New(Config{
-		LLM:      llmClient,
-		Sessions: sessionStore,
-		Tools:    toolRegistry,
-		MaxSteps: 8,
+		LLM:           llmClient,
+		Conversations: store,
+		Tools:         toolRegistry,
+		MaxSteps:      8,
 	})
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
@@ -58,8 +70,8 @@ func TestNew(t *testing.T) {
 	if created.llmClient != llmClient {
 		t.Error("New() did not retain LLM client")
 	}
-	if created.sessionStore != sessionStore {
-		t.Error("New() did not retain session store")
+	if created.conversations != store {
+		t.Error("New() did not retain conversation store")
 	}
 	if created.toolRegistry != toolRegistry {
 		t.Error("New() did not retain tool registry")
@@ -87,11 +99,11 @@ func TestNewRejectsInvalidConfiguration(t *testing.T) {
 			errorPhrase: "LLM client",
 		},
 		{
-			name: "missing session store",
+			name: "missing conversation store",
 			mutate: func(config *Config) {
-				config.Sessions = nil
+				config.Conversations = nil
 			},
-			errorPhrase: "session store",
+			errorPhrase: "conversation store",
 		},
 		{
 			name: "missing tool registry",
@@ -153,10 +165,10 @@ func TestAgentMaxSteps(t *testing.T) {
 func validAgentConfig(t *testing.T) Config {
 	t.Helper()
 	return Config{
-		LLM:      &stubLLMClient{},
-		Sessions: &stubSessionStore{},
-		Tools:    newTestToolRegistry(t),
-		MaxSteps: 8,
+		LLM:           &stubLLMClient{},
+		Conversations: &stubConversationStore{},
+		Tools:         newTestToolRegistry(t),
+		MaxSteps:      8,
 	}
 }
 

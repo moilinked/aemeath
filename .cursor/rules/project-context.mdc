@@ -14,7 +14,7 @@ alwaysApply: true
 - 已有 HTTP 服务、健康检查、环境配置、优雅关闭和基础测试。
 - LLM 层使用自定义 `Client` 接口和 OpenAI Chat Completions 兼容客户端。
 - 预期连接 `chat-gpt-luna` 网关模型及 DeepSeek V4。
-- 已实现 Agent Loop、PostgreSQL 用户与 Session、JWT 登录和受保护的 Chat API。
+- 已实现 Agent Loop、PostgreSQL 用户与 Conversation、JWT 登录和受保护的 Chat API。
 - 尚未实现 Web UI。
 
 # 架构边界
@@ -22,5 +22,5 @@ alwaysApply: true
 - `config` 负责加载配置，业务包不得自行读取 `.env`。
 - `httpapi` 只处理 HTTP 协议，不放置 Agent 业务逻辑。
 - `llm` 隔离模型协议，Agent 只依赖 `llm.Client`。
-- `agent`、`session`、`tools` 在功能实现时再创建，不预建空目录。
+- `agent`、`conversation`、`tools` 在功能实现时再创建，不预建空目录。
 - 暂不创建 `pkg`；只有确定存在跨项目公共 API 时才使用。

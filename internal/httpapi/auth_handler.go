@@ -81,7 +81,7 @@ type currentUserResponse struct {
 
 func me(w http.ResponseWriter, r *http.Request) {
 	identity, ok := identityFromContext(r.Context())
-	if !ok || strings.TrimSpace(identity.Username) == "" {
+	if !ok || ownerID(identity) == "" {
 		writeUnauthorized(w, "authentication required")
 		return
 	}

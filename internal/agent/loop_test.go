@@ -42,14 +42,14 @@ func (client *scriptedLLMClient) ChatStream(
 	return llm.ChatStreamFromChat(ctx, client.Chat, request, emit)
 }
 
-type recordingSessionStore struct {
+type recordingConversationStore struct {
 	history   []llm.Message
 	appended  []llm.Message
 	loadErr   error
 	appendErr error
 }
 
-func (store *recordingSessionStore) Load(
+func (store *recordingConversationStore) Load(
 	context.Context,
 	string,
 ) ([]llm.Message, error) {
@@ -59,7 +59,7 @@ func (store *recordingSessionStore) Load(
 	return append([]llm.Message(nil), store.history...), nil
 }
 
-func (store *recordingSessionStore) Append(
+func (store *recordingConversationStore) Append(
 	_ context.Context,
 	_ string,
 	messages ...llm.Message,
@@ -72,7 +72,19 @@ func (store *recordingSessionStore) Append(
 	return nil
 }
 
-func (store *recordingSessionStore) Delete(context.Context, string) error {
+func (store *recordingConversationStore) Create(context.Context, string, string) (Conversation, error) {
+	return Conversation{}, nil
+}
+
+func (store *recordingConversationStore) GetForUser(context.Context, string, string) (Conversation, []llm.Message, error) {
+	return Conversation{}, nil, nil
+}
+
+func (store *recordingConversationStore) ListForUser(context.Context, string) ([]Conversation, error) {
+	return nil, nil
+}
+
+func (store *recordingConversationStore) DeleteForUser(context.Context, string, string) error {
 	return nil
 }
 
@@ -103,7 +115,7 @@ func (tool *loopTestTool) Execute(
 
 func TestAgentRunReturnsFinalAnswer(t *testing.T) {
 	history := []llm.Message{{Role: llm.RoleAssistant, Content: "earlier"}}
-	store := &recordingSessionStore{history: history}
+	store := &recordingConversationStore{history: history}
 	client := &scriptedLLMClient{
 		responses: []*llm.ChatResponse{
 			{
@@ -118,7 +130,7 @@ func TestAgentRunReturnsFinalAnswer(t *testing.T) {
 	}
 	created := newLoopAgent(t, client, store, 4)
 
-	result, err := created.Run(context.Background(), " session-1 ", "hello")
+	result, err := created.Run(context.Background(), " conv-1 ", "hello")
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
@@ -153,7 +165,7 @@ func TestAgentRunReturnsFinalAnswer(t *testing.T) {
 }
 
 func TestAgentRunExecutesToolLoop(t *testing.T) {
-	store := &recordingSessionStore{}
+	store := &recordingConversationStore{}
 	client := &scriptedLLMClient{
 		responses: []*llm.ChatResponse{
 			{
@@ -181,7 +193,7 @@ func TestAgentRunExecutesToolLoop(t *testing.T) {
 	}
 	created := newLoopAgent(t, client, store, 4, tools.NewCalculatorTool())
 
-	result, err := created.Run(context.Background(), "session-1", "calculate 6 * 7")
+	result, err := created.Run(context.Background(), "conv-1", "calculate 6 * 7")
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
@@ -229,10 +241,10 @@ func TestAgentRunReturnsToolFailureAsObservation(t *testing.T) {
 			{Message: llm.Message{Role: llm.RoleAssistant, Content: "tool unavailable"}},
 		},
 	}
-	store := &recordingSessionStore{}
+	store := &recordingConversationStore{}
 	created := newLoopAgent(t, client, store, 3, failingTool)
 
-	result, err := created.Run(context.Background(), "session-1", "use tool")
+	result, err := created.Run(context.Background(), "conv-1", "use tool")
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
@@ -253,10 +265,10 @@ func TestAgentRunStopsBeforeToolAtMaxSteps(t *testing.T) {
 			{Message: toolCallMessage("call-1", "counting", `{}`)},
 		},
 	}
-	store := &recordingSessionStore{}
+	store := &recordingConversationStore{}
 	created := newLoopAgent(t, client, store, 1, countingTool)
 
-	_, err := created.Run(context.Background(), "session-1", "use tool")
+	_, err := created.Run(context.Background(), "conv-1", "use tool")
 	if !errors.Is(err, ErrMaxStepsExceeded) {
 		t.Fatalf("Run() error = %v, want ErrMaxStepsExceeded", err)
 	}
@@ -291,13 +303,13 @@ func TestAgentRunStreamEmitsEvents(t *testing.T) {
 			{Message: llm.Message{Role: llm.RoleAssistant, Content: "answer is 42"}},
 		},
 	}
-	store := &recordingSessionStore{}
+	store := &recordingConversationStore{}
 	created := newLoopAgent(t, client, store, 3, calculator)
 
 	var events []StreamEvent
 	result, err := created.RunStream(
 		context.Background(),
-		"session-1",
+		"conv-1",
 		"calculate",
 		func(event StreamEvent) error {
 			events = append(events, event)
@@ -346,12 +358,12 @@ func TestAgentRunStreamStopsWhenHandlerFails(t *testing.T) {
 			{Message: llm.Message{Role: llm.RoleAssistant, Content: "hello"}},
 		},
 	}
-	store := &recordingSessionStore{}
+	store := &recordingConversationStore{}
 	created := newLoopAgent(t, client, store, 2)
 
 	_, err := created.RunStream(
 		context.Background(),
-		"session-1",
+		"conv-1",
 		"hi",
 		func(StreamEvent) error {
 			return handlerErr
@@ -367,42 +379,42 @@ func TestAgentRunStreamStopsWhenHandlerFails(t *testing.T) {
 
 func TestAgentRunValidatesInputAndResponse(t *testing.T) {
 	tests := []struct {
-		name        string
-		sessionID   string
-		userMessage string
-		response    *llm.ChatResponse
-		wantError   error
+		name           string
+		conversationID string
+		userMessage    string
+		response       *llm.ChatResponse
+		wantError      error
 	}{
 		{
-			name:        "missing session ID",
+			name:        "missing conversation ID",
 			userMessage: "hello",
-			wantError:   ErrSessionIDRequired,
+			wantError:   ErrConversationIDRequired,
 		},
 		{
-			name:        "missing user message",
-			sessionID:   "session-1",
-			userMessage: "  ",
-			wantError:   ErrUserMessageRequired,
+			name:           "missing user message",
+			conversationID: "conv-1",
+			userMessage:    "  ",
+			wantError:      ErrUserMessageRequired,
 		},
 		{
-			name:        "nil LLM response",
-			sessionID:   "session-1",
-			userMessage: "hello",
-			wantError:   ErrInvalidLLMResponse,
+			name:           "nil LLM response",
+			conversationID: "conv-1",
+			userMessage:    "hello",
+			wantError:      ErrInvalidLLMResponse,
 		},
 		{
-			name:        "empty final answer",
-			sessionID:   "session-1",
-			userMessage: "hello",
+			name:           "empty final answer",
+			conversationID: "conv-1",
+			userMessage:    "hello",
 			response: &llm.ChatResponse{
 				Message: llm.Message{Role: llm.RoleAssistant},
 			},
 			wantError: ErrInvalidLLMResponse,
 		},
 		{
-			name:        "invalid tool call",
-			sessionID:   "session-1",
-			userMessage: "hello",
+			name:           "invalid tool call",
+			conversationID: "conv-1",
+			userMessage:    "hello",
 			response: &llm.ChatResponse{
 				Message: toolCallMessage("", "calculator", `{}`),
 			},
@@ -415,16 +427,16 @@ func TestAgentRunValidatesInputAndResponse(t *testing.T) {
 			client := &scriptedLLMClient{}
 			if test.response != nil {
 				client.responses = []*llm.ChatResponse{test.response}
-			} else if test.sessionID == "" || strings.TrimSpace(test.userMessage) == "" {
+			} else if test.conversationID == "" || strings.TrimSpace(test.userMessage) == "" {
 				client.responses = []*llm.ChatResponse{}
 			} else {
 				client.responses = []*llm.ChatResponse{nil}
 			}
-			created := newLoopAgent(t, client, &recordingSessionStore{}, 2)
+			created := newLoopAgent(t, client, &recordingConversationStore{}, 2)
 
 			_, err := created.Run(
 				context.Background(),
-				test.sessionID,
+				test.conversationID,
 				test.userMessage,
 			)
 			if !errors.Is(err, test.wantError) {
@@ -436,43 +448,43 @@ func TestAgentRunValidatesInputAndResponse(t *testing.T) {
 
 func TestAgentRunPropagatesDependencyErrors(t *testing.T) {
 	llmError := errors.New("LLM unavailable")
-	sessionError := errors.New("session unavailable")
+	storeError := errors.New("conversation store unavailable")
 	tests := []struct {
 		name      string
 		client    *scriptedLLMClient
-		store     *recordingSessionStore
+		store     *recordingConversationStore
 		wantError error
 	}{
 		{
-			name:      "load session",
+			name:      "load conversation",
 			client:    &scriptedLLMClient{},
-			store:     &recordingSessionStore{loadErr: sessionError},
-			wantError: sessionError,
+			store:     &recordingConversationStore{loadErr: storeError},
+			wantError: storeError,
 		},
 		{
 			name: "LLM request",
 			client: &scriptedLLMClient{
 				errs: []error{llmError},
 			},
-			store:     &recordingSessionStore{},
+			store:     &recordingConversationStore{},
 			wantError: llmError,
 		},
 		{
-			name: "append session",
+			name: "append conversation",
 			client: &scriptedLLMClient{
 				responses: []*llm.ChatResponse{
 					{Message: llm.Message{Role: llm.RoleAssistant, Content: "answer"}},
 				},
 			},
-			store:     &recordingSessionStore{appendErr: sessionError},
-			wantError: sessionError,
+			store:     &recordingConversationStore{appendErr: storeError},
+			wantError: storeError,
 		},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			created := newLoopAgent(t, test.client, test.store, 2)
-			_, err := created.Run(context.Background(), "session-1", "hello")
+			_, err := created.Run(context.Background(), "conv-1", "hello")
 			if !errors.Is(err, test.wantError) {
 				t.Fatalf("Run() error = %v, want %v", err, test.wantError)
 			}
@@ -480,40 +492,40 @@ func TestAgentRunPropagatesDependencyErrors(t *testing.T) {
 	}
 }
 
-func TestAgentSessionGateHonorsContext(t *testing.T) {
+func TestAgentConversationGateHonorsContext(t *testing.T) {
 	created := newLoopAgent(
 		t,
 		&scriptedLLMClient{},
-		&recordingSessionStore{},
+		&recordingConversationStore{},
 		1,
 	)
-	release, err := created.acquireSession(context.Background(), "session-1")
+	release, err := created.acquireConversation(context.Background(), "conv-1")
 	if err != nil {
-		t.Fatalf("acquireSession() error = %v", err)
+		t.Fatalf("acquireConversation() error = %v", err)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
 	defer cancel()
-	_, err = created.acquireSession(ctx, "session-1")
+	_, err = created.acquireConversation(ctx, "conv-1")
 	if !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("acquireSession() error = %v, want context deadline", err)
+		t.Fatalf("acquireConversation() error = %v, want context deadline", err)
 	}
 
 	release()
-	nextRelease, err := created.acquireSession(context.Background(), "session-1")
+	nextRelease, err := created.acquireConversation(context.Background(), "conv-1")
 	if err != nil {
-		t.Fatalf("acquireSession() after release error = %v", err)
+		t.Fatalf("acquireConversation() after release error = %v", err)
 	}
 	nextRelease()
-	if len(created.sessionGates) != 0 {
-		t.Fatalf("session gate count = %d, want 0 after release", len(created.sessionGates))
+	if len(created.conversationGates) != 0 {
+		t.Fatalf("conversation gate count = %d, want 0 after release", len(created.conversationGates))
 	}
 }
 
 func newLoopAgent(
 	t *testing.T,
 	client llm.Client,
-	store SessionStore,
+	store ConversationStore,
 	maxSteps int,
 	toolset ...tools.Tool,
 ) *Agent {
@@ -524,10 +536,10 @@ func newLoopAgent(
 		t.Fatalf("tools.NewRegistry() error = %v", err)
 	}
 	created, err := New(Config{
-		LLM:      client,
-		Sessions: store,
-		Tools:    registry,
-		MaxSteps: maxSteps,
+		LLM:           client,
+		Conversations: store,
+		Tools:         registry,
+		MaxSteps:      maxSteps,
 	})
 	if err != nil {
 		t.Fatalf("New() error = %v", err)

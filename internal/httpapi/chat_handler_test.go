@@ -14,16 +14,16 @@ import (
 
 	"github.com/ecol/chat-agent/internal/agent"
 	"github.com/ecol/chat-agent/internal/auth"
+	"github.com/ecol/chat-agent/internal/conversation"
 	"github.com/ecol/chat-agent/internal/llm"
-	"github.com/ecol/chat-agent/internal/session"
 	"github.com/ecol/chat-agent/internal/tools"
 )
 
 type stubChatRunner struct {
-	result    *agent.Result
-	err       error
-	sessionID string
-	message   string
+	result         *agent.Result
+	err            error
+	conversationID string
+	message        string
 }
 
 type countingChatRunner struct {
@@ -49,11 +49,11 @@ func (runner *countingChatRunner) Run(
 
 func (runner *countingChatRunner) RunStream(
 	ctx context.Context,
-	sessionID string,
+	conversationID string,
 	message string,
 	_ agent.StreamHandler,
 ) (*agent.Result, error) {
-	return runner.Run(ctx, sessionID, message)
+	return runner.Run(ctx, conversationID, message)
 }
 
 func (runner *countingChatRunner) calls() int {
@@ -98,11 +98,11 @@ func (runner *blockingChatRunner) Run(
 
 func (runner *blockingChatRunner) RunStream(
 	ctx context.Context,
-	sessionID string,
+	conversationID string,
 	message string,
 	_ agent.StreamHandler,
 ) (*agent.Result, error) {
-	return runner.Run(ctx, sessionID, message)
+	return runner.Run(ctx, conversationID, message)
 }
 
 func (runner *blockingChatRunner) waitUntilStarted(t *testing.T) {
@@ -124,13 +124,13 @@ func (runner *blockingChatRunner) calls() int {
 
 func (runner *stubChatRunner) Run(
 	ctx context.Context,
-	sessionID string,
+	conversationID string,
 	message string,
 ) (*agent.Result, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	runner.sessionID = sessionID
+	runner.conversationID = conversationID
 	runner.message = message
 	return runner.result, runner.err
 }
@@ -143,11 +143,11 @@ type scriptedHTTPLLMClient struct {
 
 func (runner *stubChatRunner) RunStream(
 	ctx context.Context,
-	sessionID string,
+	conversationID string,
 	message string,
 	emit agent.StreamHandler,
 ) (*agent.Result, error) {
-	result, err := runner.Run(ctx, sessionID, message)
+	result, err := runner.Run(ctx, conversationID, message)
 	if err != nil || result == nil || emit == nil {
 		return result, err
 	}
@@ -188,24 +188,213 @@ func TestChatReturnsFinalAnswer(t *testing.T) {
 			{Message: llm.Message{Role: llm.RoleAssistant, Content: "128 × 39 = 4992"}},
 		},
 	}
-	router := newChatTestRouter(t, newHTTPTestAgentWithLLM(t, llmClient, 2))
+	store := conversation.NewMemoryStore()
+	router := newChatTestRouterWithStore(t, newHTTPTestAgentWithStore(t, llmClient, store, 2), store)
 
 	recorder := httptest.NewRecorder()
 	router.ServeHTTP(recorder, authorizedJSONRequest(
 		t,
 		http.MethodPost,
 		"/api/chat",
-		`{"session_id":"session-1","message":"帮我计算 128 * 39"}`,
+		`{"message":"帮我计算 128 * 39"}`,
 	))
 
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", recorder.Code, recorder.Body)
 	}
-	if strings.TrimSpace(recorder.Body.String()) != `{"message":"128 × 39 = 4992"}` {
-		t.Fatalf("body = %q, want chat message", recorder.Body.String())
+	var response chatResponse
+	if err := json.NewDecoder(recorder.Body).Decode(&response); err != nil {
+		t.Fatalf("decode chat response: %v", err)
+	}
+	if response.ConversationID == "" {
+		t.Fatal("conversation_id is empty")
+	}
+	if response.Message != "128 × 39 = 4992" {
+		t.Fatalf("message = %q, want calculator result", response.Message)
 	}
 	if len(llmClient.requests) != 1 {
 		t.Fatalf("LLM request count = %d, want 1", len(llmClient.requests))
+	}
+}
+
+func TestChatContinuesExplicitConversation(t *testing.T) {
+	llmClient := &scriptedHTTPLLMClient{
+		responses: []*llm.ChatResponse{
+			{Message: llm.Message{Role: llm.RoleAssistant, Content: "first-reply"}},
+			{Message: llm.Message{Role: llm.RoleAssistant, Content: "second-reply"}},
+		},
+	}
+	store := conversation.NewMemoryStore()
+	chatAgent := newHTTPTestAgentWithStore(t, llmClient, store, 2)
+	router := newChatTestRouterWithStore(t, chatAgent, store)
+
+	first := httptest.NewRecorder()
+	router.ServeHTTP(first, authorizedJSONRequest(
+		t,
+		http.MethodPost,
+		"/api/chat",
+		`{"message":"hi"}`,
+	))
+	if first.Code != http.StatusOK {
+		t.Fatalf("first status = %d, want 200; body=%s", first.Code, first.Body)
+	}
+
+	var firstResponse chatResponse
+	if err := json.NewDecoder(first.Body).Decode(&firstResponse); err != nil {
+		t.Fatalf("decode first response: %v", err)
+	}
+	if firstResponse.ConversationID == "" {
+		t.Fatal("first conversation_id is empty")
+	}
+
+	second := httptest.NewRecorder()
+	router.ServeHTTP(second, authorizedJSONRequestWithKey(
+		t,
+		http.MethodPost,
+		"/api/chat",
+		`{"conversation_id":"`+firstResponse.ConversationID+`","message":"again"}`,
+		"chat-test-key-2",
+	))
+	if second.Code != http.StatusOK {
+		t.Fatalf("second status = %d, want 200; body=%s", second.Code, second.Body)
+	}
+	if len(llmClient.requests) != 2 {
+		t.Fatalf("LLM request count = %d, want 2", len(llmClient.requests))
+	}
+
+	var sawFirstUser, sawFirstReply bool
+	for _, message := range llmClient.requests[1].Messages {
+		if message.Role == llm.RoleUser && message.Content == "hi" {
+			sawFirstUser = true
+		}
+		if message.Role == llm.RoleAssistant && message.Content == "first-reply" {
+			sawFirstReply = true
+		}
+	}
+	if !sawFirstUser || !sawFirstReply {
+		t.Fatalf("second LLM request missing prior turn: %#v", llmClient.requests[1].Messages)
+	}
+
+	detail := httptest.NewRecorder()
+	detailRequest := httptest.NewRequest(
+		http.MethodGet,
+		"/api/conversations/"+firstResponse.ConversationID,
+		nil,
+	)
+	detailRequest.Header.Set(
+		"Authorization",
+		"Bearer "+signedHTTPTestToken(t, time.Now().Add(time.Hour)),
+	)
+	router.ServeHTTP(detail, detailRequest)
+	if detail.Code != http.StatusOK {
+		t.Fatalf("get conversation status = %d, want 200; body=%s", detail.Code, detail.Body)
+	}
+
+	var current conversationDetailResponse
+	if err := json.NewDecoder(detail.Body).Decode(&current); err != nil {
+		t.Fatalf("decode conversation: %v", err)
+	}
+	if current.ID != firstResponse.ConversationID {
+		t.Fatalf("conversation id = %q, want %q", current.ID, firstResponse.ConversationID)
+	}
+	if len(current.Messages) != 4 {
+		t.Fatalf("conversation messages = %d, want 4", len(current.Messages))
+	}
+}
+
+func TestChatOmittingIDStartsNewConversation(t *testing.T) {
+	store := conversation.NewMemoryStore()
+	runner := &stubChatRunner{result: &agent.Result{Message: "hello"}}
+	router := newChatTestRouterWithStore(t, runner, store)
+
+	first := httptest.NewRecorder()
+	router.ServeHTTP(first, authorizedJSONRequest(
+		t,
+		http.MethodPost,
+		"/api/chat",
+		`{"message":"hi"}`,
+	))
+	if first.Code != http.StatusOK {
+		t.Fatalf("first status = %d, want 200; body=%s", first.Code, first.Body)
+	}
+
+	var firstResponse chatResponse
+	if err := json.NewDecoder(first.Body).Decode(&firstResponse); err != nil {
+		t.Fatalf("decode first response: %v", err)
+	}
+	if firstResponse.ConversationID == "" {
+		t.Fatal("first conversation_id is empty")
+	}
+
+	second := httptest.NewRecorder()
+	router.ServeHTTP(second, authorizedJSONRequestWithKey(
+		t,
+		http.MethodPost,
+		"/api/chat",
+		`{"message":"again"}`,
+		"chat-test-key-2",
+	))
+	if second.Code != http.StatusOK {
+		t.Fatalf("second status = %d, want 200; body=%s", second.Code, second.Body)
+	}
+	if runner.conversationID == firstResponse.ConversationID {
+		t.Fatal("omitted conversation_id reused the previous conversation")
+	}
+
+	list := httptest.NewRecorder()
+	listRequest := httptest.NewRequest(http.MethodGet, "/api/conversations", nil)
+	listRequest.Header.Set(
+		"Authorization",
+		"Bearer "+signedHTTPTestToken(t, time.Now().Add(time.Hour)),
+	)
+	router.ServeHTTP(list, listRequest)
+	if list.Code != http.StatusOK {
+		t.Fatalf("list status = %d, want 200; body=%s", list.Code, list.Body)
+	}
+	var listed conversationListResponse
+	if err := json.NewDecoder(list.Body).Decode(&listed); err != nil {
+		t.Fatalf("decode list: %v", err)
+	}
+	if len(listed.Conversations) != 2 {
+		t.Fatalf("conversations = %d, want 2", len(listed.Conversations))
+	}
+}
+
+func TestChatRejectsUnknownConversation(t *testing.T) {
+	router := newChatTestRouter(t, &stubChatRunner{result: &agent.Result{Message: "unused"}})
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, authorizedJSONRequest(
+		t,
+		http.MethodPost,
+		"/api/chat",
+		`{"conversation_id":"missing-id","message":"hello"}`,
+	))
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404; body=%s", recorder.Code, recorder.Body)
+	}
+}
+
+func TestChatRejectsForeignConversation(t *testing.T) {
+	store := conversation.NewMemoryStore()
+	foreign, err := store.Create(context.Background(), "other-user", "secret")
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	runner := &stubChatRunner{result: &agent.Result{Message: "unused"}}
+	router := newChatTestRouterWithStore(t, runner, store)
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, authorizedJSONRequest(
+		t,
+		http.MethodPost,
+		"/api/chat",
+		`{"conversation_id":"`+foreign.ID+`","message":"hello"}`,
+	))
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404; body=%s", recorder.Code, recorder.Body)
+	}
+	if runner.conversationID != "" {
+		t.Fatal("foreign conversation reached the agent")
 	}
 }
 
@@ -214,7 +403,7 @@ func TestChatRequiresBearerToken(t *testing.T) {
 	request := httptest.NewRequest(
 		http.MethodPost,
 		"/api/chat",
-		strings.NewReader(`{"session_id":"session-1","message":"hello"}`),
+		strings.NewReader(`{"message":"hello"}`),
 	)
 	request.Header.Set("Content-Type", "application/json")
 	recorder := httptest.NewRecorder()
@@ -238,7 +427,7 @@ func TestChatRejectsInvalidRequests(t *testing.T) {
 	}{
 		{
 			name:       "missing content type",
-			body:       `{"session_id":"session-1","message":"hello"}`,
+			body:       `{"message":"hello"}`,
 			wantStatus: http.StatusUnsupportedMediaType,
 		},
 		{
@@ -251,35 +440,28 @@ func TestChatRejectsInvalidRequests(t *testing.T) {
 		{
 			name:        "unknown field",
 			contentType: "application/json",
-			body:        `{"session_id":"session-1","message":"hello","extra":true}`,
+			body:        `{"message":"hello","extra":true}`,
 			wantStatus:  http.StatusBadRequest,
 			wantError:   "invalid JSON request body",
 		},
 		{
-			name:        "missing session id",
+			name:        "invalid conversation id",
 			contentType: "application/json",
-			body:        `{"message":"hello"}`,
+			body:        `{"conversation_id":"bad/id","message":"hello"}`,
 			wantStatus:  http.StatusBadRequest,
-			wantError:   "session_id is required",
-		},
-		{
-			name:        "blank session id",
-			contentType: "application/json",
-			body:        `{"session_id":"  ","message":"hello"}`,
-			wantStatus:  http.StatusBadRequest,
-			wantError:   "session_id is required",
+			wantError:   "conversation_id is invalid",
 		},
 		{
 			name:        "missing message",
 			contentType: "application/json",
-			body:        `{"session_id":"session-1"}`,
+			body:        `{"conversation_id":"conv-1"}`,
 			wantStatus:  http.StatusBadRequest,
 			wantError:   "message is required",
 		},
 		{
 			name:        "body too large",
 			contentType: "application/json",
-			body:        `{"session_id":"session-1","message":"` + strings.Repeat("a", maxChatRequestBodySize) + `"}`,
+			body:        `{"message":"` + strings.Repeat("a", maxChatRequestBodySize) + `"}`,
 			wantStatus:  http.StatusRequestEntityTooLarge,
 		},
 	}
@@ -361,7 +543,7 @@ func TestChatMapsAgentErrors(t *testing.T) {
 				t,
 				http.MethodPost,
 				"/api/chat",
-				`{"session_id":"session-1","message":"hello"}`,
+				`{"message":"hello"}`,
 			))
 
 			if recorder.Code != test.wantStatus {
@@ -373,8 +555,8 @@ func TestChatMapsAgentErrors(t *testing.T) {
 			if strings.Contains(recorder.Body.String(), internalError.Error()) {
 				t.Fatal("response exposes internal chat error")
 			}
-			if runner.sessionID != "session-1" || runner.message != "hello" {
-				t.Fatalf("Run() args = (%q, %q)", runner.sessionID, runner.message)
+			if runner.conversationID == "" || runner.message != "hello" {
+				t.Fatalf("Run() args = (%q, %q)", runner.conversationID, runner.message)
 			}
 		})
 	}
@@ -383,7 +565,7 @@ func TestChatMapsAgentErrors(t *testing.T) {
 func TestChatHonorsCanceledContext(t *testing.T) {
 	store := newIdempotencyStore(time.Hour)
 	runner := &stubChatRunner{result: &agent.Result{Message: "unused"}}
-	handler := chat(runner, store)
+	handler := chat(runner, conversation.NewMemoryStore(), store)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -392,7 +574,7 @@ func TestChatHonorsCanceledContext(t *testing.T) {
 	request := httptest.NewRequest(
 		http.MethodPost,
 		"/api/chat",
-		strings.NewReader(`{"session_id":"session-1","message":"hello"}`),
+		strings.NewReader(`{"message":"hello"}`),
 	).WithContext(ctx)
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set(idempotencyHeader, "canceled-key")
@@ -406,7 +588,7 @@ func TestChatHonorsCanceledContext(t *testing.T) {
 	retry := httptest.NewRequest(
 		http.MethodPost,
 		"/api/chat",
-		strings.NewReader(`{"session_id":"session-1","message":"hello"}`),
+		strings.NewReader(`{"message":"hello"}`),
 	).WithContext(context.WithValue(
 		context.Background(),
 		identityContextKey{},
@@ -439,7 +621,7 @@ func TestChatRejectsInvalidIdempotencyKey(t *testing.T) {
 				t,
 				http.MethodPost,
 				"/api/chat",
-				`{"session_id":"session-1","message":"hello"}`,
+				`{"message":"hello"}`,
 				test.key,
 			)
 			recorder := httptest.NewRecorder()
@@ -454,7 +636,7 @@ func TestChatRejectsInvalidIdempotencyKey(t *testing.T) {
 func TestChatReplaysIdempotentSuccess(t *testing.T) {
 	runner := &countingChatRunner{result: &agent.Result{Message: "cached-answer"}}
 	router := newChatTestRouter(t, runner)
-	body := `{"session_id":"session-1","message":"hello"}`
+	body := `{"message":"hello"}`
 
 	first := httptest.NewRecorder()
 	router.ServeHTTP(first, authorizedJSONRequestWithKey(
@@ -482,7 +664,7 @@ func TestChatReplaysIdempotentSuccess(t *testing.T) {
 func TestChatReplaysIdempotentAgentError(t *testing.T) {
 	runner := &countingChatRunner{err: agent.ErrInvalidLLMResponse}
 	router := newChatTestRouter(t, runner)
-	body := `{"session_id":"session-1","message":"hello"}`
+	body := `{"message":"hello"}`
 
 	first := httptest.NewRecorder()
 	router.ServeHTTP(first, authorizedJSONRequestWithKey(
@@ -513,7 +695,7 @@ func TestChatRejectsIdempotencyKeyReuseWithDifferentPayload(t *testing.T) {
 		t,
 		http.MethodPost,
 		"/api/chat",
-		`{"session_id":"session-1","message":"hello"}`,
+		`{"message":"hello"}`,
 		"reused-key",
 	))
 	if first.Code != http.StatusOK {
@@ -525,7 +707,7 @@ func TestChatRejectsIdempotencyKeyReuseWithDifferentPayload(t *testing.T) {
 		t,
 		http.MethodPost,
 		"/api/chat",
-		`{"session_id":"session-1","message":"another"}`,
+		`{"message":"another"}`,
 		"reused-key",
 	))
 	if second.Code != http.StatusConflict {
@@ -539,7 +721,7 @@ func TestChatRejectsIdempotencyKeyReuseWithDifferentPayload(t *testing.T) {
 func TestChatRejectsConcurrentIdempotentRequests(t *testing.T) {
 	runner := newBlockingChatRunner(&agent.Result{Message: "slow-answer"})
 	router := newChatTestRouter(t, runner)
-	body := `{"session_id":"session-1","message":"hello"}`
+	body := `{"message":"hello"}`
 
 	var wg sync.WaitGroup
 	wg.Add(1)
@@ -591,27 +773,28 @@ func TestChatRunsAgentLoop(t *testing.T) {
 			{Message: llm.Message{Role: llm.RoleAssistant, Content: "128 × 39 = 4992"}},
 		},
 	}
+	store := conversation.NewMemoryStore()
 	registry, err := tools.NewRegistry(tools.NewCalculatorTool())
 	if err != nil {
 		t.Fatalf("tools.NewRegistry() error = %v", err)
 	}
 	chatAgent, err := agent.New(agent.Config{
-		LLM:      llmClient,
-		Sessions: session.NewMemoryStore(),
-		Tools:    registry,
-		MaxSteps: 3,
+		LLM:           llmClient,
+		Conversations: store,
+		Tools:         registry,
+		MaxSteps:      3,
 	})
 	if err != nil {
 		t.Fatalf("agent.New() error = %v", err)
 	}
 
-	router := newChatTestRouter(t, chatAgent)
+	router := newChatTestRouterWithStore(t, chatAgent, store)
 	recorder := httptest.NewRecorder()
 	router.ServeHTTP(recorder, authorizedJSONRequest(
 		t,
 		http.MethodPost,
 		"/api/chat",
-		`{"session_id":"session-1","message":"帮我计算 128 * 39"}`,
+		`{"message":"帮我计算 128 * 39"}`,
 	))
 
 	if recorder.Code != http.StatusOK {
@@ -651,27 +834,28 @@ func TestChatStreamReturnsSSEEvents(t *testing.T) {
 			{Message: llm.Message{Role: llm.RoleAssistant, Content: "128 × 39 = 4992"}},
 		},
 	}
+	store := conversation.NewMemoryStore()
 	registry, err := tools.NewRegistry(tools.NewCalculatorTool())
 	if err != nil {
 		t.Fatalf("tools.NewRegistry() error = %v", err)
 	}
 	chatAgent, err := agent.New(agent.Config{
-		LLM:      llmClient,
-		Sessions: session.NewMemoryStore(),
-		Tools:    registry,
-		MaxSteps: 3,
+		LLM:           llmClient,
+		Conversations: store,
+		Tools:         registry,
+		MaxSteps:      3,
 	})
 	if err != nil {
 		t.Fatalf("agent.New() error = %v", err)
 	}
 
-	router := newChatTestRouter(t, chatAgent)
+	router := newChatTestRouterWithStore(t, chatAgent, store)
 	recorder := httptest.NewRecorder()
 	router.ServeHTTP(recorder, authorizedJSONRequest(
 		t,
 		http.MethodPost,
 		"/api/chat/stream",
-		`{"session_id":"session-1","message":"帮我计算 128 * 39"}`,
+		`{"message":"帮我计算 128 * 39"}`,
 	))
 
 	if recorder.Code != http.StatusOK {
@@ -697,6 +881,9 @@ func TestChatStreamReturnsSSEEvents(t *testing.T) {
 	if events[len(events)-1].Event != "done" {
 		t.Fatalf("last event = %#v, want done", events[len(events)-1])
 	}
+	if !strings.Contains(events[len(events)-1].Data, `"conversation_id"`) {
+		t.Fatalf("done event = %#v, want conversation_id", events[len(events)-1])
+	}
 }
 
 func TestChatStreamRequiresBearerToken(t *testing.T) {
@@ -704,7 +891,7 @@ func TestChatStreamRequiresBearerToken(t *testing.T) {
 	request := httptest.NewRequest(
 		http.MethodPost,
 		"/api/chat/stream",
-		strings.NewReader(`{"session_id":"session-1","message":"hello"}`),
+		strings.NewReader(`{"message":"hello"}`),
 	)
 	request.Header.Set("Content-Type", "application/json")
 	recorder := httptest.NewRecorder()
@@ -718,14 +905,14 @@ func TestChatStreamRequiresBearerToken(t *testing.T) {
 func TestChatStreamHonorsCanceledContext(t *testing.T) {
 	store := newIdempotencyStore(time.Hour)
 	runner := newBlockingChatRunner(&agent.Result{Message: "unused"})
-	handler := chatStream(runner, store)
+	handler := chatStream(runner, conversation.NewMemoryStore(), store)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	ctx = context.WithValue(ctx, identityContextKey{}, auth.Identity{Username: testHTTPUsername})
 	request := httptest.NewRequest(
 		http.MethodPost,
 		"/api/chat/stream",
-		strings.NewReader(`{"session_id":"session-1","message":"hello"}`),
+		strings.NewReader(`{"message":"hello"}`),
 	).WithContext(ctx)
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set(idempotencyHeader, "stream-canceled-key")
@@ -749,7 +936,7 @@ func TestChatStreamHonorsCanceledContext(t *testing.T) {
 	retry := httptest.NewRequest(
 		http.MethodPost,
 		"/api/chat/stream",
-		strings.NewReader(`{"session_id":"session-1","message":"hello"}`),
+		strings.NewReader(`{"message":"hello"}`),
 	).WithContext(context.WithValue(
 		context.Background(),
 		identityContextKey{},
@@ -770,7 +957,7 @@ func TestChatStreamHonorsCanceledContext(t *testing.T) {
 func TestChatStreamReplaysIdempotentSuccess(t *testing.T) {
 	runner := &countingChatRunner{result: &agent.Result{Message: "cached-stream"}}
 	router := newChatTestRouter(t, runner)
-	body := `{"session_id":"session-1","message":"hello"}`
+	body := `{"message":"hello"}`
 
 	first := httptest.NewRecorder()
 	router.ServeHTTP(first, authorizedJSONRequestWithKey(
@@ -819,10 +1006,20 @@ func parseSSEEvents(body string) []sseTestEvent {
 
 func newChatTestRouter(t *testing.T, runner ChatRunner) http.Handler {
 	t.Helper()
+	return newChatTestRouterWithStore(t, runner, conversation.NewMemoryStore())
+}
+
+func newChatTestRouterWithStore(
+	t *testing.T,
+	runner ChatRunner,
+	store agent.ConversationStore,
+) http.Handler {
+	t.Helper()
 
 	router, err := NewRouter(Dependencies{
-		Agent: runner,
-		Auth:  newHTTPTestAuth(t),
+		Agent:         runner,
+		Auth:          newHTTPTestAuth(t),
+		Conversations: store,
 	})
 	if err != nil {
 		t.Fatalf("NewRouter() error = %v", err)
@@ -830,7 +1027,12 @@ func newChatTestRouter(t *testing.T, runner ChatRunner) http.Handler {
 	return router
 }
 
-func newHTTPTestAgentWithLLM(t *testing.T, client llm.Client, maxSteps int) *agent.Agent {
+func newHTTPTestAgentWithStore(
+	t *testing.T,
+	client llm.Client,
+	store agent.ConversationStore,
+	maxSteps int,
+) *agent.Agent {
 	t.Helper()
 
 	registry, err := tools.NewRegistry()
@@ -838,15 +1040,20 @@ func newHTTPTestAgentWithLLM(t *testing.T, client llm.Client, maxSteps int) *age
 		t.Fatalf("tools.NewRegistry() error = %v", err)
 	}
 	chatAgent, err := agent.New(agent.Config{
-		LLM:      client,
-		Sessions: session.NewMemoryStore(),
-		Tools:    registry,
-		MaxSteps: maxSteps,
+		LLM:           client,
+		Conversations: store,
+		Tools:         registry,
+		MaxSteps:      maxSteps,
 	})
 	if err != nil {
 		t.Fatalf("agent.New() error = %v", err)
 	}
 	return chatAgent
+}
+
+func newHTTPTestAgentWithLLM(t *testing.T, client llm.Client, maxSteps int) *agent.Agent {
+	t.Helper()
+	return newHTTPTestAgentWithStore(t, client, conversation.NewMemoryStore(), maxSteps)
 }
 
 func authorizedJSONRequest(t *testing.T, method, path, body string) *http.Request {

@@ -10,8 +10,8 @@ import (
 
 	"github.com/ecol/chat-agent/internal/agent"
 	"github.com/ecol/chat-agent/internal/auth"
+	"github.com/ecol/chat-agent/internal/conversation"
 	"github.com/ecol/chat-agent/internal/llm"
-	"github.com/ecol/chat-agent/internal/session"
 	"github.com/ecol/chat-agent/internal/tools"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -39,8 +39,9 @@ func TestRouter(t *testing.T) {
 	}
 
 	router, err := NewRouter(Dependencies{
-		Agent: newHTTPTestAgent(t),
-		Auth:  newHTTPTestAuth(t),
+		Agent:         newHTTPTestAgent(t),
+		Auth:          newHTTPTestAuth(t),
+		Conversations: conversation.NewMemoryStore(),
 	})
 	if err != nil {
 		t.Fatalf("NewRouter() error = %v", err)
@@ -73,11 +74,15 @@ func TestNewRouterRejectsMissingDependencies(t *testing.T) {
 	}{
 		{
 			name:         "missing agent",
-			dependencies: Dependencies{Auth: newHTTPTestAuth(t)},
+			dependencies: Dependencies{Auth: newHTTPTestAuth(t), Conversations: conversation.NewMemoryStore()},
 		},
 		{
 			name:         "missing auth service",
-			dependencies: Dependencies{Agent: newHTTPTestAgent(t)},
+			dependencies: Dependencies{Agent: newHTTPTestAgent(t), Conversations: conversation.NewMemoryStore()},
+		},
+		{
+			name:         "missing conversation store",
+			dependencies: Dependencies{Agent: newHTTPTestAgent(t), Auth: newHTTPTestAuth(t)},
 		},
 	}
 
@@ -113,10 +118,10 @@ func newHTTPTestAgent(t *testing.T) *agent.Agent {
 		t.Fatalf("tools.NewRegistry() error = %v", err)
 	}
 	chatAgent, err := agent.New(agent.Config{
-		LLM:      stubLLMClient{},
-		Sessions: session.NewMemoryStore(),
-		Tools:    registry,
-		MaxSteps: 1,
+		LLM:           stubLLMClient{},
+		Conversations: conversation.NewMemoryStore(),
+		Tools:         registry,
+		MaxSteps:      1,
 	})
 	if err != nil {
 		t.Fatalf("agent.New() error = %v", err)
