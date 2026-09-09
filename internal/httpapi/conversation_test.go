@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -85,6 +86,38 @@ func TestConversationTitle(t *testing.T) {
 	}
 }
 
+func TestParseConversationTitle(t *testing.T) {
+	tests := []struct {
+		name    string
+		value   string
+		want    string
+		wantErr error
+	}{
+		{name: "compacts whitespace", value: "  hello   world  ", want: "hello world"},
+		{name: "empty", value: "   ", wantErr: errTitleRequired},
+		{name: "too long", value: strings.Repeat("字", maxConversationTitle+1), wantErr: errTitleTooLong},
+		{name: "max length", value: strings.Repeat("字", maxConversationTitle), want: strings.Repeat("字", maxConversationTitle)},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := parseConversationTitle(test.value)
+			if test.wantErr != nil {
+				if !errors.Is(err, test.wantErr) {
+					t.Fatalf("parseConversationTitle() error = %v, want %v", err, test.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parseConversationTitle() error = %v", err)
+			}
+			if got != test.want {
+				t.Fatalf("parseConversationTitle() = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
 func TestConversationsListGetAndDelete(t *testing.T) {
 	store := conversation.NewMemoryStore()
 	router := newChatTestRouterWithStore(t, &stubChatRunner{result: &agent.Result{Message: "hello"}}, store)
@@ -136,6 +169,41 @@ func TestConversationsListGetAndDelete(t *testing.T) {
 		t.Fatalf("title = %q, want hello world", listed.Conversations[0].Title)
 	}
 
+	renamed := httptest.NewRecorder()
+	router.ServeHTTP(renamed, authorizedJSONRequest(
+		t,
+		http.MethodPatch,
+		"/api/conversations/"+chat.ConversationID,
+		`{"title":"  new   name  "}`,
+	))
+	if renamed.Code != http.StatusOK {
+		t.Fatalf("patch status = %d, want 200; body=%s", renamed.Code, renamed.Body)
+	}
+	var summary conversationSummaryResponse
+	if err := json.NewDecoder(renamed.Body).Decode(&summary); err != nil {
+		t.Fatalf("decode patch: %v", err)
+	}
+	if summary.ID != chat.ConversationID || summary.Title != "new name" {
+		t.Fatalf("patched = %#v, want id %q title new name", summary, chat.ConversationID)
+	}
+	if !summary.UpdatedAt.After(listed.Conversations[0].UpdatedAt) {
+		t.Fatalf("patched updated_at = %v, want after %v", summary.UpdatedAt, listed.Conversations[0].UpdatedAt)
+	}
+
+	list = httptest.NewRecorder()
+	listRequest = httptest.NewRequest(http.MethodGet, "/api/conversations", nil)
+	listRequest.Header.Set("Authorization", "Bearer "+signedHTTPTestToken(t, time.Now().Add(time.Hour)))
+	router.ServeHTTP(list, listRequest)
+	if list.Code != http.StatusOK {
+		t.Fatalf("list after patch status = %d, want 200; body=%s", list.Code, list.Body)
+	}
+	if err := json.NewDecoder(list.Body).Decode(&listed); err != nil {
+		t.Fatalf("decode list after patch: %v", err)
+	}
+	if len(listed.Conversations) != 1 || listed.Conversations[0].Title != "new name" {
+		t.Fatalf("listed after patch = %#v", listed.Conversations)
+	}
+
 	detail := httptest.NewRecorder()
 	detailRequest := httptest.NewRequest(
 		http.MethodGet,
@@ -179,17 +247,25 @@ func TestConversationsHideForeignAndUnknownIDs(t *testing.T) {
 		name   string
 		method string
 		path   string
+		body   string
 	}{
 		{name: "get unknown", method: http.MethodGet, path: "/api/conversations/missing-id"},
 		{name: "get foreign", method: http.MethodGet, path: "/api/conversations/" + foreign.ID},
+		{name: "patch unknown", method: http.MethodPatch, path: "/api/conversations/missing-id", body: `{"title":"nope"}`},
+		{name: "patch foreign", method: http.MethodPatch, path: "/api/conversations/" + foreign.ID, body: `{"title":"nope"}`},
 		{name: "delete unknown", method: http.MethodDelete, path: "/api/conversations/missing-id"},
 		{name: "delete foreign", method: http.MethodDelete, path: "/api/conversations/" + foreign.ID},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			recorder := httptest.NewRecorder()
-			request := httptest.NewRequest(test.method, test.path, nil)
-			request.Header.Set("Authorization", "Bearer "+signedHTTPTestToken(t, time.Now().Add(time.Hour)))
+			var request *http.Request
+			if test.body != "" {
+				request = authorizedJSONRequest(t, test.method, test.path, test.body)
+			} else {
+				request = httptest.NewRequest(test.method, test.path, nil)
+				request.Header.Set("Authorization", "Bearer "+signedHTTPTestToken(t, time.Now().Add(time.Hour)))
+			}
 			router.ServeHTTP(recorder, request)
 			if recorder.Code != http.StatusNotFound {
 				t.Fatalf("status = %d, want 404; body=%s", recorder.Code, recorder.Body)
@@ -198,6 +274,72 @@ func TestConversationsHideForeignAndUnknownIDs(t *testing.T) {
 				t.Fatal("response distinguishes foreign conversations")
 			}
 		})
+	}
+}
+
+func TestConversationsRejectInvalidTitleUpdates(t *testing.T) {
+	store := conversation.NewMemoryStore()
+	router := newChatTestRouterWithStore(t, &stubChatRunner{result: &agent.Result{Message: "hello"}}, store)
+
+	created := httptest.NewRecorder()
+	router.ServeHTTP(created, authorizedJSONRequest(
+		t,
+		http.MethodPost,
+		"/api/chat",
+		`{"message":"hello world"}`,
+	))
+	if created.Code != http.StatusOK {
+		t.Fatalf("chat status = %d, want 200; body=%s", created.Code, created.Body)
+	}
+	var chat chatResponse
+	if err := json.NewDecoder(created.Body).Decode(&chat); err != nil {
+		t.Fatalf("decode chat: %v", err)
+	}
+
+	tests := []struct {
+		name string
+		body string
+		want string
+	}{
+		{name: "empty", body: `{"title":"   "}`, want: "title is required"},
+		{name: "missing", body: `{}`, want: "title is required"},
+		{name: "too long", body: `{"title":"` + strings.Repeat("字", maxConversationTitle+1) + `"}`, want: "title is too long"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			router.ServeHTTP(recorder, authorizedJSONRequest(
+				t,
+				http.MethodPatch,
+				"/api/conversations/"+chat.ConversationID,
+				test.body,
+			))
+			if recorder.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400; body=%s", recorder.Code, recorder.Body)
+			}
+			if !strings.Contains(recorder.Body.String(), test.want) {
+				t.Fatalf("body = %s, want %q", recorder.Body.String(), test.want)
+			}
+		})
+	}
+
+	detail := httptest.NewRecorder()
+	detailRequest := httptest.NewRequest(
+		http.MethodGet,
+		"/api/conversations/"+chat.ConversationID,
+		nil,
+	)
+	detailRequest.Header.Set("Authorization", "Bearer "+signedHTTPTestToken(t, time.Now().Add(time.Hour)))
+	router.ServeHTTP(detail, detailRequest)
+	if detail.Code != http.StatusOK {
+		t.Fatalf("detail status = %d, want 200; body=%s", detail.Code, detail.Body)
+	}
+	var got conversationDetailResponse
+	if err := json.NewDecoder(detail.Body).Decode(&got); err != nil {
+		t.Fatalf("decode detail: %v", err)
+	}
+	if got.Title != "hello world" {
+		t.Fatalf("title after rejected patch = %q, want original", got.Title)
 	}
 }
 

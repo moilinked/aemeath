@@ -16,11 +16,20 @@ import (
 )
 
 const (
-	maxConversationIDLength = 128
-	maxConversationTitle    = 40
+	maxConversationIDLength      = 128
+	maxConversationTitle         = 40
+	maxConversationTitleBodySize = 4 << 10
 )
 
-var errInvalidConversationID = errors.New("conversation_id is invalid")
+var (
+	errInvalidConversationID = errors.New("conversation_id is invalid")
+	errTitleRequired         = errors.New("title is required")
+	errTitleTooLong          = errors.New("title is too long")
+)
+
+type patchConversationRequest struct {
+	Title string `json:"title"`
+}
 
 type conversationSummaryResponse struct {
 	ID        string    `json:"id"`
@@ -69,8 +78,12 @@ func parseConversationID(value string) (string, error) {
 	return value, nil
 }
 
+func compactTitle(value string) string {
+	return strings.Join(strings.Fields(value), " ")
+}
+
 func conversationTitle(message string) string {
-	message = strings.Join(strings.Fields(message), " ")
+	message = compactTitle(message)
 	if message == "" {
 		return "新对话"
 	}
@@ -79,6 +92,17 @@ func conversationTitle(message string) string {
 	}
 	runes := []rune(message)
 	return string(runes[:maxConversationTitle]) + "…"
+}
+
+func parseConversationTitle(value string) (string, error) {
+	value = compactTitle(value)
+	if value == "" {
+		return "", errTitleRequired
+	}
+	if utf8.RuneCountInString(value) > maxConversationTitle {
+		return "", errTitleTooLong
+	}
+	return value, nil
 }
 
 func summaryResponse(item agent.Conversation) conversationSummaryResponse {
@@ -147,6 +171,41 @@ func getConversation(store agent.ConversationStore) http.HandlerFunc {
 			UpdatedAt: item.UpdatedAt.UTC(),
 			Messages:  messages,
 		})
+	}
+}
+
+func patchConversation(store agent.ConversationStore) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		identity, ok := identityFromContext(r.Context())
+		if !ok || ownerID(identity) == "" {
+			writeUnauthorized(w, "authentication required")
+			return
+		}
+
+		conversationID, err := parseConversationID(chi.URLParam(r, "conversationID"))
+		if err != nil || conversationID == "" {
+			writeAPIError(w, http.StatusBadRequest, "conversation_id is invalid")
+			return
+		}
+
+		var request patchConversationRequest
+		if !decodeJSONBody(w, r, maxConversationTitleBodySize, &request) {
+			return
+		}
+		title, err := parseConversationTitle(request.Title)
+		if err != nil {
+			writeAPIError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+
+		item, err := store.UpdateTitleForUser(r.Context(), ownerID(identity), conversationID, title)
+		if err != nil {
+			writeConversationError(w, err)
+			return
+		}
+
+		w.Header().Set("Cache-Control", "no-store")
+		writeJSON(w, http.StatusOK, summaryResponse(item))
 	}
 }
 

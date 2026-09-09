@@ -241,6 +241,57 @@ func (store *ConversationStore) ListForUser(
 	return items, nil
 }
 
+// UpdateTitleForUser 更新当前用户拥有的对话标题，并刷新 updated_at。
+func (store *ConversationStore) UpdateTitleForUser(
+	ctx context.Context,
+	userID string,
+	conversationID string,
+	title string,
+) (agent.Conversation, error) {
+	if err := ctx.Err(); err != nil {
+		return agent.Conversation{}, err
+	}
+	if store.pool == nil {
+		return agent.Conversation{}, errors.New("postgres pool is required")
+	}
+	userID = strings.TrimSpace(userID)
+	conversationID = strings.TrimSpace(conversationID)
+	title = strings.TrimSpace(title)
+	if userID == "" {
+		return agent.Conversation{}, errors.New("conversation user id is required")
+	}
+	if conversationID == "" {
+		return agent.Conversation{}, agent.ErrConversationNotFound
+	}
+	if title == "" {
+		return agent.Conversation{}, errors.New("conversation title is required")
+	}
+
+	var item agent.Conversation
+	err := store.pool.QueryRow(
+		ctx,
+		`
+		UPDATE conversations
+		SET title = $3,
+		    updated_at = NOW()
+		WHERE id = $1 AND user_id = $2
+		RETURNING id, title, created_at, updated_at
+		`,
+		conversationID,
+		userID,
+		title,
+	).Scan(&item.ID, &item.Title, &item.CreatedAt, &item.UpdatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return agent.Conversation{}, agent.ErrConversationNotFound
+	}
+	if err != nil {
+		return agent.Conversation{}, fmt.Errorf("update conversation title: %w", err)
+	}
+	item.CreatedAt = item.CreatedAt.UTC()
+	item.UpdatedAt = item.UpdatedAt.UTC()
+	return item, nil
+}
+
 // DeleteForUser 删除当前用户拥有的对话。
 func (store *ConversationStore) DeleteForUser(
 	ctx context.Context,

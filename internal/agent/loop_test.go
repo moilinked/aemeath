@@ -84,6 +84,10 @@ func (store *recordingConversationStore) ListForUser(context.Context, string) ([
 	return nil, nil
 }
 
+func (store *recordingConversationStore) UpdateTitleForUser(context.Context, string, string, string) (Conversation, error) {
+	return Conversation{}, nil
+}
+
 func (store *recordingConversationStore) DeleteForUser(context.Context, string, string) error {
 	return nil
 }

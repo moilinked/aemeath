@@ -127,6 +127,23 @@ func TestUserAndConversationStore(t *testing.T) {
 		t.Fatalf("GetForUser() foreign error = %v, want ErrConversationNotFound", err)
 	}
 
+	renamed, err := conversations.UpdateTitleForUser(ctx, userID, created.ID, "renamed")
+	if err != nil {
+		t.Fatalf("UpdateTitleForUser() error = %v", err)
+	}
+	if renamed.Title != "renamed" {
+		t.Fatalf("UpdateTitleForUser() title = %q, want renamed", renamed.Title)
+	}
+	if !renamed.UpdatedAt.After(item.UpdatedAt) {
+		t.Fatalf("UpdateTitleForUser() updated_at = %v, want after %v", renamed.UpdatedAt, item.UpdatedAt)
+	}
+	if _, err := conversations.UpdateTitleForUser(ctx, otherID, created.ID, "nope"); !errors.Is(err, agent.ErrConversationNotFound) {
+		t.Fatalf("UpdateTitleForUser() foreign error = %v, want ErrConversationNotFound", err)
+	}
+	if _, err := conversations.UpdateTitleForUser(ctx, userID, created.ID, "  "); err == nil {
+		t.Fatal("UpdateTitleForUser() empty title error = nil, want an error")
+	}
+
 	listed, err := conversations.ListForUser(ctx, userID)
 	if err != nil {
 		t.Fatalf("ListForUser() error = %v", err)
@@ -176,6 +193,9 @@ func TestStoresHonorCanceledContext(t *testing.T) {
 	}
 	if _, err := conversations.ListForUser(ctx, "user"); !errors.Is(err, context.Canceled) {
 		t.Fatalf("ListForUser() error = %v, want context.Canceled", err)
+	}
+	if _, err := conversations.UpdateTitleForUser(ctx, "user", "conversation", "title"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("UpdateTitleForUser() error = %v, want context.Canceled", err)
 	}
 	if err := conversations.DeleteForUser(ctx, "user", "conversation"); !errors.Is(err, context.Canceled) {
 		t.Fatalf("DeleteForUser() error = %v, want context.Canceled", err)

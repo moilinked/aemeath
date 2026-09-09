@@ -69,6 +69,26 @@ func TestMemoryStoreCreateLoadAndAppend(t *testing.T) {
 	if _, _, err := store.GetForUser(ctx, "user-2", created.ID); !errors.Is(err, agent.ErrConversationNotFound) {
 		t.Fatalf("GetForUser() foreign error = %v, want ErrConversationNotFound", err)
 	}
+
+	renamed, err := store.UpdateTitleForUser(ctx, "user-1", created.ID, "renamed")
+	if err != nil {
+		t.Fatalf("UpdateTitleForUser() error = %v", err)
+	}
+	if renamed.Title != "renamed" {
+		t.Fatalf("UpdateTitleForUser() title = %q, want renamed", renamed.Title)
+	}
+	if !renamed.UpdatedAt.After(created.UpdatedAt) {
+		t.Fatalf("UpdateTitleForUser() updated_at = %v, want after %v", renamed.UpdatedAt, created.UpdatedAt)
+	}
+	if _, err := store.UpdateTitleForUser(ctx, "user-2", created.ID, "nope"); !errors.Is(err, agent.ErrConversationNotFound) {
+		t.Fatalf("UpdateTitleForUser() foreign error = %v, want ErrConversationNotFound", err)
+	}
+	if _, err := store.UpdateTitleForUser(ctx, "user-1", "missing", "nope"); !errors.Is(err, agent.ErrConversationNotFound) {
+		t.Fatalf("UpdateTitleForUser() missing error = %v, want ErrConversationNotFound", err)
+	}
+	if _, err := store.UpdateTitleForUser(ctx, "user-1", created.ID, "  "); err == nil {
+		t.Fatal("UpdateTitleForUser() empty title error = nil, want an error")
+	}
 }
 
 func TestMemoryStoreListAndDelete(t *testing.T) {
@@ -159,6 +179,13 @@ func TestMemoryStoreCanceledContext(t *testing.T) {
 			name: "list",
 			operation: func(ctx context.Context, store *conversation.MemoryStore) error {
 				_, err := store.ListForUser(ctx, "user-1")
+				return err
+			},
+		},
+		{
+			name: "update title",
+			operation: func(ctx context.Context, store *conversation.MemoryStore) error {
+				_, err := store.UpdateTitleForUser(ctx, "user-1", created.ID, "renamed")
 				return err
 			},
 		},

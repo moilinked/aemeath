@@ -184,6 +184,43 @@ func (store *MemoryStore) ListForUser(ctx context.Context, userID string) ([]age
 	return items, nil
 }
 
+// UpdateTitleForUser 更新当前用户拥有的对话标题，并刷新 updated_at。
+func (store *MemoryStore) UpdateTitleForUser(
+	ctx context.Context,
+	userID string,
+	conversationID string,
+	title string,
+) (agent.Conversation, error) {
+	if err := ctx.Err(); err != nil {
+		return agent.Conversation{}, err
+	}
+	userID = strings.TrimSpace(userID)
+	conversationID = strings.TrimSpace(conversationID)
+	title = strings.TrimSpace(title)
+	if userID == "" {
+		return agent.Conversation{}, errors.New("conversation user id is required")
+	}
+	if conversationID == "" {
+		return agent.Conversation{}, agent.ErrConversationNotFound
+	}
+	if title == "" {
+		return agent.Conversation{}, errors.New("conversation title is required")
+	}
+
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return agent.Conversation{}, err
+	}
+	record := store.conversations[conversationID]
+	if record == nil || record.userID != userID {
+		return agent.Conversation{}, agent.ErrConversationNotFound
+	}
+	record.title = title
+	record.updatedAt = store.now()
+	return record.summary(conversationID), nil
+}
+
 // DeleteForUser 删除当前用户拥有的对话。
 func (store *MemoryStore) DeleteForUser(ctx context.Context, userID string, conversationID string) error {
 	if err := ctx.Err(); err != nil {

@@ -25,7 +25,7 @@
 - PostgreSQL 用户存储、bcrypt 密码校验与 Bearer JWT 路由保护
 - 受登录保护的 `POST /api/chat`、SSE 流式 `POST /api/chat/stream`、Agent 错误映射与聊天幂等
 - 对话是服务端资源：省略 `conversation_id` 会新开对话，带上已有 ID 则续聊
-- `GET /api/conversations` 与 `GET /api/conversations/{id}` 列出、读取当前用户的对话
+- `GET /api/conversations`、`GET /api/conversations/{id}` 与 `PATCH /api/conversations/{id}` 列出、读取、改标题当前用户的对话
 - LLM 与天气请求对 429/5xx 等可恢复错误进行指数重试
 
 当前已提供受 JWT 保护的 Chat API。客户端应保存服务端返回的 `conversation_id`（或刷新后从对话列表恢复），尚未实现 Web UI。
@@ -179,6 +179,7 @@ Invoke-RestMethod http://localhost:8080/healthz
 | `GET`    | `/api/auth/me`            | 当前用户（不含对话 ID）                       |
 | `GET`    | `/api/conversations`      | 当前用户对话列表                              |
 | `GET`    | `/api/conversations/{id}` | 对话详情与消息历史                            |
+| `PATCH`  | `/api/conversations/{id}` | 修改对话标题                                  |
 | `DELETE` | `/api/conversations/{id}` | 删除对话                                      |
 | `POST`   | `/api/chat`               | 非流式发送；省略 `conversation_id` 会新开对话 |
 | `POST`   | `/api/chat/stream`        | SSE 流式发送，请求体与 `/api/chat` 相同       |

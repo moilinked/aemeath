@@ -46,6 +46,7 @@
 | `GET` | `/api/auth/me` | 是 | 否 | 当前用户 |
 | `GET` | `/api/conversations` | 是 | 否 | 对话列表（`updated_at` 倒序） |
 | `GET` | `/api/conversations/{id}` | 是 | 否 | 对话详情 + 消息 |
+| `PATCH` | `/api/conversations/{id}` | 是 | 否 | 修改对话标题 |
 | `DELETE` | `/api/conversations/{id}` | 是 | 否 | 删除对话 |
 | `POST` | `/api/chat` | 是 | **必填** | 非流式发送 |
 | `POST` | `/api/chat/stream` | 是 | **必填** | SSE 流式发送 |
@@ -132,7 +133,7 @@ Authorization: Bearer <access_token>
 }
 ```
 
-没有对话时 `conversations` 为 `[]`。标题取自首条用户消息，最长约 40 个字符，目前不能改名。暂无分页。
+没有对话时 `conversations` 为 `[]`。新建时标题取自首条用户消息（空白压缩后最长 40 个字符，超出加 `…`）。可用 `PATCH` 改名。暂无分页。
 
 ### `GET /api/conversations/{id}`
 
@@ -175,6 +176,51 @@ Authorization: Bearer <access_token>
 | 401 | `valid Bearer token required` |
 | 404 | `conversation not found` |
 | 500 | `conversation request failed` |
+
+### `PATCH /api/conversations/{id}`
+
+请求体上限 4 KiB。不需要 `Idempotency-Key`。
+
+```http
+PATCH /api/conversations/{id}
+Authorization: Bearer <access_token>
+Content-Type: application/json
+```
+
+```json
+{
+  "title": "新标题"
+}
+```
+
+`title` 会压缩连续空白。去空白后不能为空，也不能超过 40 个字符（按 Unicode 码点计）；超长不会截断。成功会更新 `updated_at`，列表仍按更新时间倒序。
+
+成功 `200`，返回摘要（便于刷新侧边栏）：
+
+```json
+{
+  "id": "<conversation_id>",
+  "title": "新标题",
+  "created_at": "<rfc3339>",
+  "updated_at": "<rfc3339>"
+}
+```
+
+未知 ID、已删除或不属于当前用户：**一律 `404`**，`error` 为 `conversation not found`。
+
+| 状态 | `error` | 何时 |
+| --- | --- | --- |
+| 400 | `conversation_id is invalid` | 路径 ID 非法 |
+| 400 | `title is required` | 缺字段、空字符串或全是空白 |
+| 400 | `title is too long` | 超过 40 个字符 |
+| 400 | `invalid JSON request body` | JSON 非法、多余字段、多个 JSON 值 |
+| 401 | `valid Bearer token required` | 未登录或 Token 无效 |
+| 404 | `conversation not found` | 未知 / 他人 / 已删除 |
+| 415 | `Content-Type must be application/json` | 不是 JSON |
+| 413 | `request body is too large` | 超过 4 KiB |
+| 500 | `conversation request failed` | 服务内部错误 |
+
+响应带 `Cache-Control: no-store`。
 
 ### `DELETE /api/conversations/{id}`
 
@@ -306,7 +352,7 @@ data: {"conversation_id":"<id>","message":"128 × 39 = 4992"}
 2. 侧边栏只信 `GET /api/conversations`，不要用 `/api/auth/me` 找当前对话。
 3. 渲染历史用详情接口的 `messages`，不要在本地另存一份当作权威数据。发给模型的上下文可能已按 token 预算裁掉旧轮次，**不会**改写库里的历史。
 4. 工具调用轮次会出现 `assistant`（带 `tool_calls`）和 `tool` 消息；UI 可折叠展示，不要当成普通聊天气泡重复渲染。
-5. 服务端暂无改标题、置顶、分页、分享链接。
+5. 服务端暂无置顶、分页、分享链接。改标题用 `PATCH /api/conversations/{id}`。
 6. 幂等缓存在单进程内存：多副本部署时，重试必须打到同一实例才命中；重启后键失效，重试会再跑一轮。
 
 ## 调用示例
@@ -347,4 +393,9 @@ curl -sS http://localhost:8080/api/conversations \
 
 curl -sS http://localhost:8080/api/conversations/<id> \
   -H "Authorization: Bearer <access_token>"
+
+curl -sS -X PATCH http://localhost:8080/api/conversations/<id> \
+  -H "Authorization: Bearer <access_token>" \
+  -H "Content-Type: application/json" \
+  -d "{\"title\":\"新标题\"}"
 ```

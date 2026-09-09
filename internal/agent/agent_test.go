@@ -49,6 +49,10 @@ func (store *stubConversationStore) ListForUser(context.Context, string) ([]Conv
 	return nil, nil
 }
 
+func (store *stubConversationStore) UpdateTitleForUser(context.Context, string, string, string) (Conversation, error) {
+	return Conversation{}, nil
+}
+
 func (store *stubConversationStore) DeleteForUser(context.Context, string, string) error {
 	return nil
 }
