@@ -19,6 +19,8 @@ var (
 	ErrUserMessageRequired = errors.New("agent user message is required")
 	// ErrMaxStepsExceeded 表示 Agent 在限制步数内未生成最终回答。
 	ErrMaxStepsExceeded = errors.New("agent maximum execution steps exceeded")
+	// ErrContextBudgetExceeded 表示 System Prompt、当前轮次或工具定义已超过 token 预算。
+	ErrContextBudgetExceeded = errors.New("agent context exceeds token budget")
 	// ErrInvalidLLMResponse 表示 LLM 返回空响应或无效消息。
 	ErrInvalidLLMResponse = errors.New("invalid LLM response")
 	// ErrInvalidToolCall 表示 LLM 返回的工具调用缺少必要字段。
@@ -83,10 +85,11 @@ func (agent *Agent) RunStream(
 	var usage llm.Usage
 
 	for step := 1; step <= agent.maxSteps; step++ {
-		response, err := agent.completeChat(ctx, llm.ChatRequest{
-			Messages: messages,
-			Tools:    definitions,
-		}, emit)
+		prompt, err := agent.fitContext(messages, definitions)
+		if err != nil {
+			return nil, err
+		}
+		response, err := agent.completeChat(ctx, agent.chatRequest(prompt, definitions), emit)
 		if err != nil {
 			return nil, fmt.Errorf("agent LLM step %d: %w", step, err)
 		}
@@ -182,6 +185,25 @@ func (agent *Agent) RunStream(
 	}
 
 	return nil, fmt.Errorf("%w: limit=%d", ErrMaxStepsExceeded, agent.maxSteps)
+}
+
+func (agent *Agent) chatRequest(messages []llm.Message, definitions []llm.ToolDefinition) llm.ChatRequest {
+	request := llm.ChatRequest{
+		Messages: messages,
+		Tools:    definitions,
+	}
+	if agent.maxOutputTokens > 0 {
+		maxTokens := agent.maxOutputTokens
+		request.MaxTokens = &maxTokens
+	}
+	return request
+}
+
+func (agent *Agent) fitContext(
+	messages []llm.Message,
+	definitions []llm.ToolDefinition,
+) ([]llm.Message, error) {
+	return trimMessages(messages, estimateToolTokens(definitions), agent.contextTokens)
 }
 
 func (agent *Agent) completeChat(

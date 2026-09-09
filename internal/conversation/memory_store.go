@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/ecol/chat-agent/internal/agent"
@@ -30,9 +31,13 @@ type MemoryStore struct {
 
 // NewMemoryStore 创建空的内存对话存储。
 func NewMemoryStore() *MemoryStore {
+	start := time.Now().UTC()
+	var seq atomic.Int64
 	return &MemoryStore{
 		conversations: make(map[string]*storedConversation),
-		now:           func() time.Time { return time.Now().UTC() },
+		now: func() time.Time {
+			return start.Add(time.Duration(seq.Add(1)) * time.Millisecond)
+		},
 	}
 }
 

@@ -514,6 +514,12 @@ func TestChatMapsAgentErrors(t *testing.T) {
 			wantError:  "agent exceeded maximum execution steps",
 		},
 		{
+			name:       "context budget exceeded",
+			err:        agent.ErrContextBudgetExceeded,
+			wantStatus: http.StatusBadRequest,
+			wantError:  "chat context exceeds token budget",
+		},
+		{
 			name:       "invalid LLM response",
 			err:        agent.ErrInvalidLLMResponse,
 			wantStatus: http.StatusBadGateway,

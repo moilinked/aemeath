@@ -241,6 +241,7 @@ Agent 失败且已写入缓存时（例如 `502`），同键重放会再次返�
 
 | 状态 | `error` | 说明 |
 | --- | --- | --- |
+| 400 | `chat context exceeds token budget` | System Prompt、当前轮次或工具定义已超过预算 |
 | 400 | `message is required` | 空消息 |
 | 400 | `conversation_id is invalid` | ID 字符或长度不合法 |
 | 400 | `Idempotency-Key is required` 等 | 缺少或非法幂等键 |
@@ -303,7 +304,7 @@ data: {"conversation_id":"<id>","message":"128 × 39 = 4992"}
 
 1. **新对话不要带旧 ID**，也不要省略 ID 指望续上最近一次。
 2. 侧边栏只信 `GET /api/conversations`，不要用 `/api/auth/me` 找当前对话。
-3. 渲染历史用详情接口的 `messages`，不要在本地另存一份当作权威数据。
+3. 渲染历史用详情接口的 `messages`，不要在本地另存一份当作权威数据。发给模型的上下文可能已按 token 预算裁掉旧轮次，**不会**改写库里的历史。
 4. 工具调用轮次会出现 `assistant`（带 `tool_calls`）和 `tool` 消息；UI 可折叠展示，不要当成普通聊天气泡重复渲染。
 5. 服务端暂无改标题、置顶、分页、分享链接。
 6. 幂等缓存在单进程内存：多副本部署时，重试必须打到同一实例才命中；重启后键失效，重试会再跑一轮。

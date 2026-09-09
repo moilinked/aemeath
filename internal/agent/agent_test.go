@@ -120,11 +120,18 @@ func TestNewRejectsInvalidConfiguration(t *testing.T) {
 			errorPhrase: "max steps",
 		},
 		{
-			name: "negative max steps",
+			name: "negative context tokens",
 			mutate: func(config *Config) {
-				config.MaxSteps = -1
+				config.ContextTokens = -1
 			},
-			errorPhrase: "max steps",
+			errorPhrase: "context tokens",
+		},
+		{
+			name: "negative max output tokens",
+			mutate: func(config *Config) {
+				config.MaxOutputTokens = -1
+			},
+			errorPhrase: "max output tokens",
 		},
 	}
 

@@ -180,6 +180,8 @@ func mapChatError(err error) (int, string) {
 		return http.StatusBadRequest, "message is required"
 	case errors.Is(err, agent.ErrMaxStepsExceeded):
 		return http.StatusGatewayTimeout, "agent exceeded maximum execution steps"
+	case errors.Is(err, agent.ErrContextBudgetExceeded):
+		return http.StatusBadRequest, "chat context exceeds token budget"
 	case errors.Is(err, agent.ErrInvalidLLMResponse), errors.Is(err, agent.ErrInvalidToolCall):
 		return http.StatusBadGateway, "chat completion failed"
 	default:

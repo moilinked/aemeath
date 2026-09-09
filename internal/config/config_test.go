@@ -14,31 +14,33 @@ const (
 
 func TestLoad(t *testing.T) {
 	tests := []struct {
-		name              string
-		address           string
-		serverPort        string
-		readTimeout       string
-		llmProvider       string
-		llmRequestTimeout string
-		llmRetryAttempts  string
-		llmRetryInitial   string
-		llmRetryMax       string
-		agentMaxSteps     string
-		openAIAPIKey      string
-		openAIBaseURL     string
-		openAIModel       string
-		jwtSecret         string
-		jwtAccessTTL      string
-		jwtIssuer         string
-		missingJWTSecret  bool
-		databaseURL       string
-		missingDatabase   bool
-		wantAddress       string
-		wantTimeout       time.Duration
-		wantLLM           LLMConfig
-		wantAgent         AgentConfig
-		wantAuth          AuthConfig
-		wantErr           bool
+		name                 string
+		address              string
+		serverPort           string
+		readTimeout          string
+		llmProvider          string
+		llmRequestTimeout    string
+		llmRetryAttempts     string
+		llmRetryInitial      string
+		llmRetryMax          string
+		agentMaxSteps        string
+		agentContextTokens   string
+		agentMaxOutputTokens string
+		openAIAPIKey         string
+		openAIBaseURL        string
+		openAIModel          string
+		jwtSecret            string
+		jwtAccessTTL         string
+		jwtIssuer            string
+		missingJWTSecret     bool
+		databaseURL          string
+		missingDatabase      bool
+		wantAddress          string
+		wantTimeout          time.Duration
+		wantLLM              LLMConfig
+		wantAgent            AgentConfig
+		wantAuth             AuthConfig
+		wantErr              bool
 	}{
 		{
 			name:        "uses defaults",
@@ -53,7 +55,7 @@ func TestLoad(t *testing.T) {
 				RetryInitialInterval: defaultLLMRetryInitial,
 				RetryMaxInterval:     defaultLLMRetryMax,
 			},
-			wantAgent: AgentConfig{MaxSteps: defaultAgentMaxSteps},
+			wantAgent: defaultWantAgent(defaultAgentMaxSteps),
 			wantAuth: AuthConfig{
 				SigningKey: testJWTSecret,
 				AccessTTL:  defaultJWTAccessTTL,
@@ -61,24 +63,26 @@ func TestLoad(t *testing.T) {
 			},
 		},
 		{
-			name:              "reads environment",
-			address:           "127.0.0.1:9090",
-			serverPort:        "9191",
-			readTimeout:       "20s",
-			llmProvider:       "OPENAI",
-			llmRequestTimeout: "45s",
-			llmRetryAttempts:  "4",
-			llmRetryInitial:   "100ms",
-			llmRetryMax:       "1s",
-			agentMaxSteps:     "12",
-			openAIAPIKey:      "secret-key",
-			openAIBaseURL:     "https://gateway.example.com/v1",
-			openAIModel:       "chat-gpt-luna",
-			jwtSecret:         "abcdef0123456789abcdef0123456789",
-			jwtAccessTTL:      "30m",
-			jwtIssuer:         "test-issuer",
-			wantAddress:       "127.0.0.1:9090",
-			wantTimeout:       20 * time.Second,
+			name:                 "reads environment",
+			address:              "127.0.0.1:9090",
+			serverPort:           "9191",
+			readTimeout:          "20s",
+			llmProvider:          "OPENAI",
+			llmRequestTimeout:    "45s",
+			llmRetryAttempts:     "4",
+			llmRetryInitial:      "100ms",
+			llmRetryMax:          "1s",
+			agentMaxSteps:        "12",
+			agentContextTokens:   "4096",
+			agentMaxOutputTokens: "1024",
+			openAIAPIKey:         "secret-key",
+			openAIBaseURL:        "https://gateway.example.com/v1",
+			openAIModel:          "chat-gpt-luna",
+			jwtSecret:            "abcdef0123456789abcdef0123456789",
+			jwtAccessTTL:         "30m",
+			jwtIssuer:            "test-issuer",
+			wantAddress:          "127.0.0.1:9090",
+			wantTimeout:          20 * time.Second,
 			wantLLM: LLMConfig{
 				Provider:             LLMProviderOpenAI,
 				BaseURL:              "https://gateway.example.com/v1",
@@ -89,7 +93,11 @@ func TestLoad(t *testing.T) {
 				RetryInitialInterval: 100 * time.Millisecond,
 				RetryMaxInterval:     time.Second,
 			},
-			wantAgent: AgentConfig{MaxSteps: 12},
+			wantAgent: AgentConfig{
+				MaxSteps:        12,
+				ContextTokens:   4096,
+				MaxOutputTokens: 1024,
+			},
 			wantAuth: AuthConfig{
 				SigningKey: "abcdef0123456789abcdef0123456789",
 				AccessTTL:  30 * time.Minute,
@@ -110,7 +118,7 @@ func TestLoad(t *testing.T) {
 				RetryInitialInterval: defaultLLMRetryInitial,
 				RetryMaxInterval:     defaultLLMRetryMax,
 			},
-			wantAgent: AgentConfig{MaxSteps: defaultAgentMaxSteps},
+			wantAgent: defaultWantAgent(defaultAgentMaxSteps),
 			wantAuth: AuthConfig{
 				SigningKey: testJWTSecret,
 				AccessTTL:  defaultJWTAccessTTL,
@@ -136,6 +144,21 @@ func TestLoad(t *testing.T) {
 			name:          "rejects non-positive agent max steps",
 			agentMaxSteps: "0",
 			wantErr:       true,
+		},
+		{
+			name:               "rejects invalid agent context tokens",
+			agentContextTokens: "invalid",
+			wantErr:            true,
+		},
+		{
+			name:               "rejects non-positive agent context tokens",
+			agentContextTokens: "0",
+			wantErr:            true,
+		},
+		{
+			name:                 "rejects invalid agent max output tokens",
+			agentMaxOutputTokens: "invalid",
+			wantErr:              true,
 		},
 		{
 			name:       "rejects invalid server port",
@@ -171,7 +194,7 @@ func TestLoad(t *testing.T) {
 				RetryInitialInterval: defaultLLMRetryInitial,
 				RetryMaxInterval:     defaultLLMRetryMax,
 			},
-			wantAgent: AgentConfig{MaxSteps: defaultAgentMaxSteps},
+			wantAgent: defaultWantAgent(defaultAgentMaxSteps),
 			wantAuth: AuthConfig{
 				SigningKey: "short",
 				AccessTTL:  defaultJWTAccessTTL,
@@ -227,6 +250,8 @@ func TestLoad(t *testing.T) {
 			t.Setenv("LLM_RETRY_INITIAL_INTERVAL", tt.llmRetryInitial)
 			t.Setenv("LLM_RETRY_MAX_INTERVAL", tt.llmRetryMax)
 			t.Setenv("AGENT_MAX_STEPS", tt.agentMaxSteps)
+			t.Setenv("AGENT_CONTEXT_TOKENS", tt.agentContextTokens)
+			t.Setenv("AGENT_MAX_OUTPUT_TOKENS", tt.agentMaxOutputTokens)
 			t.Setenv("OPENAI_API_KEY", tt.openAIAPIKey)
 			t.Setenv("OPENAI_BASE_URL", tt.openAIBaseURL)
 			t.Setenv("OPENAI_MODEL", tt.openAIModel)
@@ -297,5 +322,13 @@ func TestLoad(t *testing.T) {
 				t.Errorf("Auth issuer = %q, want %q", cfg.Auth.Issuer, tt.wantAuth.Issuer)
 			}
 		})
+	}
+}
+
+func defaultWantAgent(maxSteps int) AgentConfig {
+	return AgentConfig{
+		MaxSteps:        maxSteps,
+		ContextTokens:   defaultAgentContextTokens,
+		MaxOutputTokens: defaultAgentMaxOutputTokens,
 	}
 }

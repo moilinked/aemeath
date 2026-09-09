@@ -202,6 +202,8 @@ Invoke-RestMethod http://localhost:8080/healthz
 | `LLM_RETRY_INITIAL_INTERVAL` | `200ms`                     | LLM 指数重试的初始间隔                                               |
 | `LLM_RETRY_MAX_INTERVAL`     | `2s`                        | LLM 指数重试的最大间隔                                               |
 | `AGENT_MAX_STEPS`            | `8`                         | 单次 Agent 运行允许的最大 LLM 决策次数                               |
+| `AGENT_CONTEXT_TOKENS`       | `8192`                      | 单次 LLM 请求的估算 prompt token 上限；超出则丢掉最旧完整轮次        |
+| `AGENT_MAX_OUTPUT_TOKENS`    | `2048`                      | 单次回复的最大输出 token（`max_tokens`）                             |
 | `DATABASE_URL`               | 无                          | 远程 PostgreSQL 连接串，必填；格式见 `docs/deploy-postgres-linux.md` |
 | `JWT_SECRET`                 | 无                          | HS256 签名密钥，必填                                                 |
 | `JWT_ACCESS_TTL`             | `168h`                      | Access Token 有效期（7 天）                                          |
@@ -271,7 +273,7 @@ go test -tags=integration -run "^TestDeepSeekConnectivity$" -count=1 ./internal/
 - [x] SSE 支持客户端主动断开并取消本次 Chat，停止后续 LLM 与工具调用
 - [x] PostgreSQL Conversation 持久化
 - [x] 对话由服务端生成 ID；省略 ID 新开对话，带上已有 ID 续聊
-- [ ] 上下文裁剪和 Token 预算
+- [x] 上下文裁剪和 Token 预算
 - [ ] Tracing 与 Evals
 - [ ] RAG 与搜索工具
 - [ ] MCP

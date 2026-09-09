@@ -164,6 +164,54 @@ func TestAgentRunReturnsFinalAnswer(t *testing.T) {
 	}
 }
 
+func TestAgentRunTrimsOldHistory(t *testing.T) {
+	history := []llm.Message{
+		{Role: llm.RoleUser, Content: strings.Repeat("旧问题", 40)},
+		{Role: llm.RoleAssistant, Content: strings.Repeat("旧回答", 40)},
+	}
+	store := &recordingConversationStore{history: history}
+	client := &scriptedLLMClient{
+		responses: []*llm.ChatResponse{
+			{Message: llm.Message{Role: llm.RoleAssistant, Content: "now"}},
+		},
+	}
+	budget := estimateMessageTokens([]llm.Message{
+		SystemMessage(),
+		{Role: llm.RoleUser, Content: "现在"},
+	}) + 64
+	created := newLoopAgentWithBudget(t, client, store, 2, budget, 0)
+
+	if _, err := created.Run(context.Background(), "conv-1", "现在"); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if len(client.requests) != 1 {
+		t.Fatalf("LLM request count = %d, want 1", len(client.requests))
+	}
+	for _, message := range client.requests[0].Messages {
+		if strings.Contains(message.Content, "旧问题") || strings.Contains(message.Content, "旧回答") {
+			t.Fatalf("LLM still received trimmed history: %#v", client.requests[0].Messages)
+		}
+	}
+	if store.appended[0].Content != "现在" {
+		t.Fatalf("persisted turn = %#v, want current user message", store.appended)
+	}
+}
+
+func TestAgentRunSetsMaxOutputTokens(t *testing.T) {
+	client := &scriptedLLMClient{
+		responses: []*llm.ChatResponse{
+			{Message: llm.Message{Role: llm.RoleAssistant, Content: "ok"}},
+		},
+	}
+	created := newLoopAgentWithBudget(t, client, &recordingConversationStore{}, 1, 0, 128)
+	if _, err := created.Run(context.Background(), "conv-1", "hi"); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if client.requests[0].MaxTokens == nil || *client.requests[0].MaxTokens != 128 {
+		t.Fatalf("MaxTokens = %#v, want 128", client.requests[0].MaxTokens)
+	}
+}
+
 func TestAgentRunExecutesToolLoop(t *testing.T) {
 	store := &recordingConversationStore{}
 	client := &scriptedLLMClient{
@@ -530,16 +578,31 @@ func newLoopAgent(
 	toolset ...tools.Tool,
 ) *Agent {
 	t.Helper()
+	return newLoopAgentWithBudget(t, client, store, maxSteps, 0, 0, toolset...)
+}
+
+func newLoopAgentWithBudget(
+	t *testing.T,
+	client llm.Client,
+	store ConversationStore,
+	maxSteps int,
+	contextTokens int,
+	maxOutputTokens int,
+	toolset ...tools.Tool,
+) *Agent {
+	t.Helper()
 
 	registry, err := tools.NewRegistry(toolset...)
 	if err != nil {
 		t.Fatalf("tools.NewRegistry() error = %v", err)
 	}
 	created, err := New(Config{
-		LLM:           client,
-		Conversations: store,
-		Tools:         registry,
-		MaxSteps:      maxSteps,
+		LLM:             client,
+		Conversations:   store,
+		Tools:           registry,
+		MaxSteps:        maxSteps,
+		ContextTokens:   contextTokens,
+		MaxOutputTokens: maxOutputTokens,
 	})
 	if err != nil {
 		t.Fatalf("New() error = %v", err)

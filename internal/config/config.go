@@ -13,23 +13,25 @@ import (
 )
 
 const (
-	defaultServerPort        = 8080
-	defaultReadHeaderTimeout = 5 * time.Second
-	defaultReadTimeout       = 15 * time.Second
-	defaultWriteTimeout      = 30 * time.Second
-	defaultIdleTimeout       = 60 * time.Second
-	defaultShutdownTimeout   = 10 * time.Second
-	defaultLLMProvider       = LLMProviderDeepSeek
-	defaultLLMRequestTimeout = 60 * time.Second
-	defaultOpenAIBaseURL     = "https://api.openai.com/v1"
-	defaultDeepSeekBaseURL   = "https://api.deepseek.com"
-	defaultDeepSeekModel     = "deepseek-v4-pro"
-	defaultAgentMaxSteps     = 8
-	defaultLLMRetryAttempts  = 3
-	defaultLLMRetryInitial   = 200 * time.Millisecond
-	defaultLLMRetryMax       = 2 * time.Second
-	defaultJWTAccessTTL      = 7 * 24 * time.Hour
-	defaultJWTIssuer         = "chat-agent"
+	defaultServerPort           = 8080
+	defaultReadHeaderTimeout    = 5 * time.Second
+	defaultReadTimeout          = 15 * time.Second
+	defaultWriteTimeout         = 30 * time.Second
+	defaultIdleTimeout          = 60 * time.Second
+	defaultShutdownTimeout      = 10 * time.Second
+	defaultLLMProvider          = LLMProviderDeepSeek
+	defaultLLMRequestTimeout    = 60 * time.Second
+	defaultOpenAIBaseURL        = "https://api.openai.com/v1"
+	defaultDeepSeekBaseURL      = "https://api.deepseek.com"
+	defaultDeepSeekModel        = "deepseek-v4-pro"
+	defaultAgentMaxSteps        = 8
+	defaultAgentContextTokens   = 8192
+	defaultAgentMaxOutputTokens = 2048
+	defaultLLMRetryAttempts     = 3
+	defaultLLMRetryInitial      = 200 * time.Millisecond
+	defaultLLMRetryMax          = 2 * time.Second
+	defaultJWTAccessTTL         = 7 * 24 * time.Hour
+	defaultJWTIssuer            = "chat-agent"
 )
 
 // LLMProvider 表示当前启用的模型供应商。
@@ -57,7 +59,9 @@ type LLMConfig struct {
 
 // AgentConfig 包含 Agent 的执行边界配置。
 type AgentConfig struct {
-	MaxSteps int
+	MaxSteps        int
+	ContextTokens   int
+	MaxOutputTokens int
 }
 
 // AuthConfig 包含 JWT Access Token 配置。
@@ -101,6 +105,14 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	agentContextTokens, err := positiveIntOrDefault("AGENT_CONTEXT_TOKENS", defaultAgentContextTokens)
+	if err != nil {
+		return Config{}, err
+	}
+	agentMaxOutputTokens, err := positiveIntOrDefault("AGENT_MAX_OUTPUT_TOKENS", defaultAgentMaxOutputTokens)
+	if err != nil {
+		return Config{}, err
+	}
 	authConfig, err := loadAuthConfig()
 	if err != nil {
 		return Config{}, err
@@ -120,7 +132,9 @@ func Load() (Config, error) {
 		ShutdownTimeout:   defaultShutdownTimeout,
 		LLM:               llmConfig,
 		Agent: AgentConfig{
-			MaxSteps: agentMaxSteps,
+			MaxSteps:        agentMaxSteps,
+			ContextTokens:   agentContextTokens,
+			MaxOutputTokens: agentMaxOutputTokens,
 		},
 		Auth: authConfig,
 	}

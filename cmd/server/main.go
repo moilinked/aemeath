@@ -121,10 +121,12 @@ func newAgent(
 	}
 
 	chatAgent, err := agent.New(agent.Config{
-		LLM:           llmClient,
-		Conversations: conversations,
-		Tools:         toolRegistry,
-		MaxSteps:      cfg.MaxSteps,
+		LLM:             llmClient,
+		Conversations:   conversations,
+		Tools:           toolRegistry,
+		MaxSteps:        cfg.MaxSteps,
+		ContextTokens:   cfg.ContextTokens,
+		MaxOutputTokens: cfg.MaxOutputTokens,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create agent: %w", err)
