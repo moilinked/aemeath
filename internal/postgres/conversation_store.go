@@ -292,6 +292,51 @@ func (store *ConversationStore) UpdateTitleForUser(
 	return item, nil
 }
 
+// ClearMessagesForUser 清空当前用户拥有的对话消息，保留对话本身。
+func (store *ConversationStore) ClearMessagesForUser(
+	ctx context.Context,
+	userID string,
+	conversationID string,
+) (agent.Conversation, error) {
+	if err := ctx.Err(); err != nil {
+		return agent.Conversation{}, err
+	}
+	if store.pool == nil {
+		return agent.Conversation{}, errors.New("postgres pool is required")
+	}
+	userID = strings.TrimSpace(userID)
+	conversationID = strings.TrimSpace(conversationID)
+	if userID == "" {
+		return agent.Conversation{}, errors.New("conversation user id is required")
+	}
+	if conversationID == "" {
+		return agent.Conversation{}, agent.ErrConversationNotFound
+	}
+
+	var item agent.Conversation
+	err := store.pool.QueryRow(
+		ctx,
+		`
+		UPDATE conversations
+		SET messages = '[]'::jsonb,
+		    updated_at = NOW()
+		WHERE id = $1 AND user_id = $2
+		RETURNING id, title, created_at, updated_at
+		`,
+		conversationID,
+		userID,
+	).Scan(&item.ID, &item.Title, &item.CreatedAt, &item.UpdatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return agent.Conversation{}, agent.ErrConversationNotFound
+	}
+	if err != nil {
+		return agent.Conversation{}, fmt.Errorf("clear conversation messages: %w", err)
+	}
+	item.CreatedAt = item.CreatedAt.UTC()
+	item.UpdatedAt = item.UpdatedAt.UTC()
+	return item, nil
+}
+
 // DeleteForUser 删除当前用户拥有的对话。
 func (store *ConversationStore) DeleteForUser(
 	ctx context.Context,

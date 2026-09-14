@@ -88,6 +88,10 @@ func (store *recordingConversationStore) UpdateTitleForUser(context.Context, str
 	return Conversation{}, nil
 }
 
+func (store *recordingConversationStore) ClearMessagesForUser(context.Context, string, string) (Conversation, error) {
+	return Conversation{}, nil
+}
+
 func (store *recordingConversationStore) DeleteForUser(context.Context, string, string) error {
 	return nil
 }

@@ -13,6 +13,7 @@ import (
 	"github.com/ecol/chat-agent/internal/agent"
 	"github.com/ecol/chat-agent/internal/auth"
 	"github.com/ecol/chat-agent/internal/conversation"
+	"github.com/ecol/chat-agent/internal/llm"
 )
 
 func TestOwnerID(t *testing.T) {
@@ -253,6 +254,8 @@ func TestConversationsHideForeignAndUnknownIDs(t *testing.T) {
 		{name: "get foreign", method: http.MethodGet, path: "/api/conversations/" + foreign.ID},
 		{name: "patch unknown", method: http.MethodPatch, path: "/api/conversations/missing-id", body: `{"title":"nope"}`},
 		{name: "patch foreign", method: http.MethodPatch, path: "/api/conversations/" + foreign.ID, body: `{"title":"nope"}`},
+		{name: "clear unknown", method: http.MethodDelete, path: "/api/conversations/missing-id/messages"},
+		{name: "clear foreign", method: http.MethodDelete, path: "/api/conversations/" + foreign.ID + "/messages"},
 		{name: "delete unknown", method: http.MethodDelete, path: "/api/conversations/missing-id"},
 		{name: "delete foreign", method: http.MethodDelete, path: "/api/conversations/" + foreign.ID},
 	}
@@ -340,6 +343,107 @@ func TestConversationsRejectInvalidTitleUpdates(t *testing.T) {
 	}
 	if got.Title != "hello world" {
 		t.Fatalf("title after rejected patch = %q, want original", got.Title)
+	}
+}
+
+func TestConversationsClearMessages(t *testing.T) {
+	store := conversation.NewMemoryStore()
+	router := newChatTestRouterWithStore(t, &stubChatRunner{result: &agent.Result{Message: "hello"}}, store)
+
+	created := httptest.NewRecorder()
+	router.ServeHTTP(created, authorizedJSONRequest(
+		t,
+		http.MethodPost,
+		"/api/chat",
+		`{"message":"hello world"}`,
+	))
+	if created.Code != http.StatusOK {
+		t.Fatalf("chat status = %d, want 200; body=%s", created.Code, created.Body)
+	}
+	var chat chatResponse
+	if err := json.NewDecoder(created.Body).Decode(&chat); err != nil {
+		t.Fatalf("decode chat: %v", err)
+	}
+	if err := store.Append(
+		context.Background(),
+		chat.ConversationID,
+		llm.Message{Role: llm.RoleUser, Content: "hello world"},
+		llm.Message{Role: llm.RoleAssistant, Content: "hello"},
+	); err != nil {
+		t.Fatalf("Append() error = %v", err)
+	}
+
+	detail := httptest.NewRecorder()
+	detailRequest := httptest.NewRequest(
+		http.MethodGet,
+		"/api/conversations/"+chat.ConversationID,
+		nil,
+	)
+	detailRequest.Header.Set("Authorization", "Bearer "+signedHTTPTestToken(t, time.Now().Add(time.Hour)))
+	router.ServeHTTP(detail, detailRequest)
+	if detail.Code != http.StatusOK {
+		t.Fatalf("detail status = %d, want 200; body=%s", detail.Code, detail.Body)
+	}
+	var before conversationDetailResponse
+	if err := json.NewDecoder(detail.Body).Decode(&before); err != nil {
+		t.Fatalf("decode detail: %v", err)
+	}
+	if len(before.Messages) == 0 {
+		t.Fatal("detail messages are empty before clear")
+	}
+
+	cleared := httptest.NewRecorder()
+	clearRequest := httptest.NewRequest(
+		http.MethodDelete,
+		"/api/conversations/"+chat.ConversationID+"/messages",
+		nil,
+	)
+	clearRequest.Header.Set("Authorization", "Bearer "+signedHTTPTestToken(t, time.Now().Add(time.Hour)))
+	router.ServeHTTP(cleared, clearRequest)
+	if cleared.Code != http.StatusOK {
+		t.Fatalf("clear status = %d, want 200; body=%s", cleared.Code, cleared.Body)
+	}
+	var after conversationDetailResponse
+	if err := json.NewDecoder(cleared.Body).Decode(&after); err != nil {
+		t.Fatalf("decode clear: %v", err)
+	}
+	if after.ID != chat.ConversationID || after.Title != "hello world" {
+		t.Fatalf("cleared = %#v, want id %q title hello world", after, chat.ConversationID)
+	}
+	if after.Messages == nil || len(after.Messages) != 0 {
+		t.Fatalf("cleared messages = %#v, want []", after.Messages)
+	}
+	if !after.UpdatedAt.After(before.UpdatedAt) {
+		t.Fatalf("cleared updated_at = %v, want after %v", after.UpdatedAt, before.UpdatedAt)
+	}
+
+	again := httptest.NewRecorder()
+	router.ServeHTTP(again, clearRequest)
+	if again.Code != http.StatusOK {
+		t.Fatalf("second clear status = %d, want 200; body=%s", again.Code, again.Body)
+	}
+
+	history, err := store.Load(context.Background(), chat.ConversationID)
+	if err != nil {
+		t.Fatalf("Load() after clear error = %v", err)
+	}
+	if len(history) != 0 {
+		t.Fatalf("Load() after clear = %#v, want empty", history)
+	}
+
+	listed := httptest.NewRecorder()
+	listRequest := httptest.NewRequest(http.MethodGet, "/api/conversations", nil)
+	listRequest.Header.Set("Authorization", "Bearer "+signedHTTPTestToken(t, time.Now().Add(time.Hour)))
+	router.ServeHTTP(listed, listRequest)
+	if listed.Code != http.StatusOK {
+		t.Fatalf("list status = %d, want 200; body=%s", listed.Code, listed.Body)
+	}
+	var list conversationListResponse
+	if err := json.NewDecoder(listed.Body).Decode(&list); err != nil {
+		t.Fatalf("decode list: %v", err)
+	}
+	if len(list.Conversations) != 1 || list.Conversations[0].ID != chat.ConversationID {
+		t.Fatalf("listed after clear = %#v", list.Conversations)
 	}
 }
 

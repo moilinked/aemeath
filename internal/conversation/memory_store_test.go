@@ -89,6 +89,37 @@ func TestMemoryStoreCreateLoadAndAppend(t *testing.T) {
 	if _, err := store.UpdateTitleForUser(ctx, "user-1", created.ID, "  "); err == nil {
 		t.Fatal("UpdateTitleForUser() empty title error = nil, want an error")
 	}
+
+	cleared, err := store.ClearMessagesForUser(ctx, "user-1", created.ID)
+	if err != nil {
+		t.Fatalf("ClearMessagesForUser() error = %v", err)
+	}
+	if cleared.ID != created.ID || cleared.Title != "renamed" {
+		t.Fatalf("ClearMessagesForUser() conversation = %#v", cleared)
+	}
+	if !cleared.UpdatedAt.After(renamed.UpdatedAt) {
+		t.Fatalf("ClearMessagesForUser() updated_at = %v, want after %v", cleared.UpdatedAt, renamed.UpdatedAt)
+	}
+	history, err := store.Load(ctx, created.ID)
+	if err != nil {
+		t.Fatalf("Load() after clear error = %v", err)
+	}
+	if len(history) != 0 {
+		t.Fatalf("Load() after clear = %#v, want empty", history)
+	}
+	item, messages, err = store.GetForUser(ctx, "user-1", created.ID)
+	if err != nil {
+		t.Fatalf("GetForUser() after clear error = %v", err)
+	}
+	if item.Title != "renamed" || len(messages) != 0 {
+		t.Fatalf("GetForUser() after clear = %#v messages=%#v", item, messages)
+	}
+	if _, err := store.ClearMessagesForUser(ctx, "user-2", created.ID); !errors.Is(err, agent.ErrConversationNotFound) {
+		t.Fatalf("ClearMessagesForUser() foreign error = %v, want ErrConversationNotFound", err)
+	}
+	if _, err := store.ClearMessagesForUser(ctx, "user-1", "missing"); !errors.Is(err, agent.ErrConversationNotFound) {
+		t.Fatalf("ClearMessagesForUser() missing error = %v, want ErrConversationNotFound", err)
+	}
 }
 
 func TestMemoryStoreListAndDelete(t *testing.T) {
@@ -186,6 +217,13 @@ func TestMemoryStoreCanceledContext(t *testing.T) {
 			name: "update title",
 			operation: func(ctx context.Context, store *conversation.MemoryStore) error {
 				_, err := store.UpdateTitleForUser(ctx, "user-1", created.ID, "renamed")
+				return err
+			},
+		},
+		{
+			name: "clear messages",
+			operation: func(ctx context.Context, store *conversation.MemoryStore) error {
+				_, err := store.ClearMessagesForUser(ctx, "user-1", created.ID)
 				return err
 			},
 		},

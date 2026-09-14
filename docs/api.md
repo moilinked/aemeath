@@ -47,6 +47,7 @@
 | `GET` | `/api/conversations` | 是 | 否 | 对话列表（`updated_at` 倒序） |
 | `GET` | `/api/conversations/{id}` | 是 | 否 | 对话详情 + 消息 |
 | `PATCH` | `/api/conversations/{id}` | 是 | 否 | 修改对话标题 |
+| `DELETE` | `/api/conversations/{id}/messages` | 是 | 否 | 清空对话消息，保留对话 |
 | `DELETE` | `/api/conversations/{id}` | 是 | 否 | 删除对话 |
 | `POST` | `/api/chat` | 是 | **必填** | 非流式发送 |
 | `POST` | `/api/chat/stream` | 是 | **必填** | SSE 流式发送 |
@@ -222,6 +223,33 @@ Content-Type: application/json
 
 响应带 `Cache-Control: no-store`。
 
+### `DELETE /api/conversations/{id}/messages`
+
+清空该对话里的全部消息，**保留**同一条对话（`id`、标题不变）。之后带着这个 `conversation_id` 续聊时，模型只看到新消息，看不到被清掉的历史。不需要 `Idempotency-Key`。已是空历史时再清一次也是 `200`。
+
+成功 `200`：
+
+```json
+{
+  "id": "<conversation_id>",
+  "title": "帮我计算 128 * 39",
+  "created_at": "<rfc3339>",
+  "updated_at": "<rfc3339>",
+  "messages": []
+}
+```
+
+未知 ID、已删除或不属于当前用户：**一律 `404`**，`error` 为 `conversation not found`。
+
+| 状态 | `error` |
+| --- | --- |
+| 400 | `conversation_id is invalid` |
+| 401 | `valid Bearer token required` |
+| 404 | `conversation not found` |
+| 500 | `conversation request failed` |
+
+响应带 `Cache-Control: no-store`。客户端应丢掉本地缓存的气泡，继续用同一个对话 ID 发送。
+
 ### `DELETE /api/conversations/{id}`
 
 成功 `204`，无响应体。未知 / 他人 ID 同样 `404`。
@@ -352,7 +380,7 @@ data: {"conversation_id":"<id>","message":"128 × 39 = 4992"}
 2. 侧边栏只信 `GET /api/conversations`，不要用 `/api/auth/me` 找当前对话。
 3. 渲染历史用详情接口的 `messages`，不要在本地另存一份当作权威数据。发给模型的上下文可能已按 token 预算裁掉旧轮次，**不会**改写库里的历史。
 4. 工具调用轮次会出现 `assistant`（带 `tool_calls`）和 `tool` 消息；UI 可折叠展示，不要当成普通聊天气泡重复渲染。
-5. 服务端暂无置顶、分页、分享链接。改标题用 `PATCH /api/conversations/{id}`。
+5. 服务端暂无置顶、分页、分享链接。改标题用 `PATCH /api/conversations/{id}`。清空当前对话上下文（保留会话、丢掉历史）用 `DELETE /api/conversations/{id}/messages`。
 6. 幂等缓存在单进程内存：多副本部署时，重试必须打到同一实例才命中；重启后键失效，重试会再跑一轮。
 
 ## 调用示例
@@ -398,4 +426,7 @@ curl -sS -X PATCH http://localhost:8080/api/conversations/<id> \
   -H "Authorization: Bearer <access_token>" \
   -H "Content-Type: application/json" \
   -d "{\"title\":\"新标题\"}"
+
+curl -sS -X DELETE http://localhost:8080/api/conversations/<id>/messages \
+  -H "Authorization: Bearer <access_token>"
 ```

@@ -59,6 +59,7 @@ func NewRouter(dependencies Dependencies) (http.Handler, error) {
 		api.Get("/conversations", listConversations(dependencies.Conversations))
 		api.Get("/conversations/{conversationID}", getConversation(dependencies.Conversations))
 		api.Patch("/conversations/{conversationID}", patchConversation(dependencies.Conversations))
+		api.Delete("/conversations/{conversationID}/messages", clearConversationMessages(dependencies.Conversations))
 		api.Delete("/conversations/{conversationID}", deleteConversation(dependencies.Conversations))
 		api.Post("/chat", chat(dependencies.Agent, dependencies.Conversations, idempotency))
 		api.Post("/chat/stream", chatStream(dependencies.Agent, dependencies.Conversations, idempotency))

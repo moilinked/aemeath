@@ -53,6 +53,10 @@ func (store *stubConversationStore) UpdateTitleForUser(context.Context, string, 
 	return Conversation{}, nil
 }
 
+func (store *stubConversationStore) ClearMessagesForUser(context.Context, string, string) (Conversation, error) {
+	return Conversation{}, nil
+}
+
 func (store *stubConversationStore) DeleteForUser(context.Context, string, string) error {
 	return nil
 }

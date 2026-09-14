@@ -302,6 +302,101 @@ func TestChatContinuesExplicitConversation(t *testing.T) {
 	}
 }
 
+func TestChatAfterClearingMessagesStartsFresh(t *testing.T) {
+	llmClient := &scriptedHTTPLLMClient{
+		responses: []*llm.ChatResponse{
+			{Message: llm.Message{Role: llm.RoleAssistant, Content: "first-reply"}},
+			{Message: llm.Message{Role: llm.RoleAssistant, Content: "fresh-reply"}},
+		},
+	}
+	store := conversation.NewMemoryStore()
+	chatAgent := newHTTPTestAgentWithStore(t, llmClient, store, 2)
+	router := newChatTestRouterWithStore(t, chatAgent, store)
+
+	first := httptest.NewRecorder()
+	router.ServeHTTP(first, authorizedJSONRequest(
+		t,
+		http.MethodPost,
+		"/api/chat",
+		`{"message":"hi"}`,
+	))
+	if first.Code != http.StatusOK {
+		t.Fatalf("first status = %d, want 200; body=%s", first.Code, first.Body)
+	}
+	var firstResponse chatResponse
+	if err := json.NewDecoder(first.Body).Decode(&firstResponse); err != nil {
+		t.Fatalf("decode first response: %v", err)
+	}
+
+	cleared := httptest.NewRecorder()
+	clearRequest := httptest.NewRequest(
+		http.MethodDelete,
+		"/api/conversations/"+firstResponse.ConversationID+"/messages",
+		nil,
+	)
+	clearRequest.Header.Set("Authorization", "Bearer "+signedHTTPTestToken(t, time.Now().Add(time.Hour)))
+	router.ServeHTTP(cleared, clearRequest)
+	if cleared.Code != http.StatusOK {
+		t.Fatalf("clear status = %d, want 200; body=%s", cleared.Code, cleared.Body)
+	}
+
+	second := httptest.NewRecorder()
+	router.ServeHTTP(second, authorizedJSONRequestWithKey(
+		t,
+		http.MethodPost,
+		"/api/chat",
+		`{"conversation_id":"`+firstResponse.ConversationID+`","message":"again"}`,
+		"chat-test-key-2",
+	))
+	if second.Code != http.StatusOK {
+		t.Fatalf("second status = %d, want 200; body=%s", second.Code, second.Body)
+	}
+	if len(llmClient.requests) != 2 {
+		t.Fatalf("LLM request count = %d, want 2", len(llmClient.requests))
+	}
+
+	for _, message := range llmClient.requests[1].Messages {
+		if message.Role == llm.RoleUser && message.Content == "hi" {
+			t.Fatalf("cleared history still sent to LLM: %#v", llmClient.requests[1].Messages)
+		}
+		if message.Role == llm.RoleAssistant && message.Content == "first-reply" {
+			t.Fatalf("cleared history still sent to LLM: %#v", llmClient.requests[1].Messages)
+		}
+	}
+
+	var sawCurrentUser bool
+	for _, message := range llmClient.requests[1].Messages {
+		if message.Role == llm.RoleUser && message.Content == "again" {
+			sawCurrentUser = true
+		}
+	}
+	if !sawCurrentUser {
+		t.Fatalf("second LLM request missing current user message: %#v", llmClient.requests[1].Messages)
+	}
+
+	detail := httptest.NewRecorder()
+	detailRequest := httptest.NewRequest(
+		http.MethodGet,
+		"/api/conversations/"+firstResponse.ConversationID,
+		nil,
+	)
+	detailRequest.Header.Set("Authorization", "Bearer "+signedHTTPTestToken(t, time.Now().Add(time.Hour)))
+	router.ServeHTTP(detail, detailRequest)
+	if detail.Code != http.StatusOK {
+		t.Fatalf("detail status = %d, want 200; body=%s", detail.Code, detail.Body)
+	}
+	var current conversationDetailResponse
+	if err := json.NewDecoder(detail.Body).Decode(&current); err != nil {
+		t.Fatalf("decode conversation: %v", err)
+	}
+	if current.ID != firstResponse.ConversationID || current.Title != "hi" {
+		t.Fatalf("conversation after clear = %#v", current)
+	}
+	if len(current.Messages) != 2 {
+		t.Fatalf("conversation messages = %d, want 2", len(current.Messages))
+	}
+}
+
 func TestChatOmittingIDStartsNewConversation(t *testing.T) {
 	store := conversation.NewMemoryStore()
 	runner := &stubChatRunner{result: &agent.Result{Message: "hello"}}

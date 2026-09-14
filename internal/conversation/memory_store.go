@@ -221,6 +221,38 @@ func (store *MemoryStore) UpdateTitleForUser(
 	return record.summary(conversationID), nil
 }
 
+// ClearMessagesForUser 清空当前用户拥有的对话消息，保留对话本身。
+func (store *MemoryStore) ClearMessagesForUser(
+	ctx context.Context,
+	userID string,
+	conversationID string,
+) (agent.Conversation, error) {
+	if err := ctx.Err(); err != nil {
+		return agent.Conversation{}, err
+	}
+	userID = strings.TrimSpace(userID)
+	conversationID = strings.TrimSpace(conversationID)
+	if userID == "" {
+		return agent.Conversation{}, errors.New("conversation user id is required")
+	}
+	if conversationID == "" {
+		return agent.Conversation{}, agent.ErrConversationNotFound
+	}
+
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return agent.Conversation{}, err
+	}
+	record := store.conversations[conversationID]
+	if record == nil || record.userID != userID {
+		return agent.Conversation{}, agent.ErrConversationNotFound
+	}
+	record.messages = []llm.Message{}
+	record.updatedAt = store.now()
+	return record.summary(conversationID), nil
+}
+
 // DeleteForUser 删除当前用户拥有的对话。
 func (store *MemoryStore) DeleteForUser(ctx context.Context, userID string, conversationID string) error {
 	if err := ctx.Err(); err != nil {

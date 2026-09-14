@@ -144,6 +144,34 @@ func TestUserAndConversationStore(t *testing.T) {
 		t.Fatal("UpdateTitleForUser() empty title error = nil, want an error")
 	}
 
+	cleared, err := conversations.ClearMessagesForUser(ctx, userID, created.ID)
+	if err != nil {
+		t.Fatalf("ClearMessagesForUser() error = %v", err)
+	}
+	if cleared.ID != created.ID || cleared.Title != "renamed" {
+		t.Fatalf("ClearMessagesForUser() conversation = %#v", cleared)
+	}
+	if !cleared.UpdatedAt.After(renamed.UpdatedAt) {
+		t.Fatalf("ClearMessagesForUser() updated_at = %v, want after %v", cleared.UpdatedAt, renamed.UpdatedAt)
+	}
+	history, err := conversations.Load(ctx, created.ID)
+	if err != nil {
+		t.Fatalf("Load() after clear error = %v", err)
+	}
+	if len(history) != 0 {
+		t.Fatalf("Load() after clear = %#v, want empty", history)
+	}
+	item, messages, err = conversations.GetForUser(ctx, userID, created.ID)
+	if err != nil {
+		t.Fatalf("GetForUser() after clear error = %v", err)
+	}
+	if item.Title != "renamed" || len(messages) != 0 {
+		t.Fatalf("GetForUser() after clear = %#v messages=%#v", item, messages)
+	}
+	if _, err := conversations.ClearMessagesForUser(ctx, otherID, created.ID); !errors.Is(err, agent.ErrConversationNotFound) {
+		t.Fatalf("ClearMessagesForUser() foreign error = %v, want ErrConversationNotFound", err)
+	}
+
 	listed, err := conversations.ListForUser(ctx, userID)
 	if err != nil {
 		t.Fatalf("ListForUser() error = %v", err)
@@ -196,6 +224,9 @@ func TestStoresHonorCanceledContext(t *testing.T) {
 	}
 	if _, err := conversations.UpdateTitleForUser(ctx, "user", "conversation", "title"); !errors.Is(err, context.Canceled) {
 		t.Fatalf("UpdateTitleForUser() error = %v, want context.Canceled", err)
+	}
+	if _, err := conversations.ClearMessagesForUser(ctx, "user", "conversation"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("ClearMessagesForUser() error = %v, want context.Canceled", err)
 	}
 	if err := conversations.DeleteForUser(ctx, "user", "conversation"); !errors.Is(err, context.Canceled) {
 		t.Fatalf("DeleteForUser() error = %v, want context.Canceled", err)

@@ -209,6 +209,37 @@ func patchConversation(store agent.ConversationStore) http.HandlerFunc {
 	}
 }
 
+func clearConversationMessages(store agent.ConversationStore) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		identity, ok := identityFromContext(r.Context())
+		if !ok || ownerID(identity) == "" {
+			writeUnauthorized(w, "authentication required")
+			return
+		}
+
+		conversationID, err := parseConversationID(chi.URLParam(r, "conversationID"))
+		if err != nil || conversationID == "" {
+			writeAPIError(w, http.StatusBadRequest, "conversation_id is invalid")
+			return
+		}
+
+		item, err := store.ClearMessagesForUser(r.Context(), ownerID(identity), conversationID)
+		if err != nil {
+			writeConversationError(w, err)
+			return
+		}
+
+		w.Header().Set("Cache-Control", "no-store")
+		writeJSON(w, http.StatusOK, conversationDetailResponse{
+			ID:        item.ID,
+			Title:     item.Title,
+			CreatedAt: item.CreatedAt.UTC(),
+			UpdatedAt: item.UpdatedAt.UTC(),
+			Messages:  []llm.Message{},
+		})
+	}
+}
+
 func deleteConversation(store agent.ConversationStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		identity, ok := identityFromContext(r.Context())
