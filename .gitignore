@@ -5,3 +5,7 @@
 .env.*
 !.env.example
 /tmp-bcrypt/
+*.tar
+*.tar.gz
+*.zip
+*.7z
