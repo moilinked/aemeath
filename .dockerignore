@@ -1,0 +1,11 @@
+.git
+.cursor
+.env
+.env.*
+!.env.example
+*.exe
+/bin/
+/coverage.out
+/tmp-bcrypt/
+docs
+*.md

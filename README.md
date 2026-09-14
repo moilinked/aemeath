@@ -97,8 +97,10 @@ chat-agent/
 │   ├── tools/
 │   └── server/
 ├── docker-compose.yml
+├── Dockerfile
 ├── docs/
 │   ├── api.md
+│   ├── deploy-docker-linux.md
 │   └── deploy-postgres-linux.md
 ├── .env.example
 ├── go.mod
@@ -122,6 +124,8 @@ Copy-Item .env.example .env
 ```
 
 在 `.env` 中填写当前供应商对应的 API Key，并将 `DATABASE_URL` 改为 Linux 服务器上的 PostgreSQL 连接串（不要使用 `127.0.0.1`）。`.env` 已被 Git 忽略，禁止将真实密钥写入 `.env.example`。服务启动时会执行迁移。登录凭据与对话均读写远程数据库，不要把登录账号或密码写入文档。
+
+Linux 服务器也可用 Docker 只跑后端（宿主机 PostgreSQL 仍用 `5432`，应用映射 `127.0.0.1:9998`）。步骤与 Nginx 日志路径见 [docs/deploy-docker-linux.md](docs/deploy-docker-linux.md)。
 
 ### 3. 选择模型
 

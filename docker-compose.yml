@@ -1,19 +1,22 @@
 services:
-  postgres:
-    image: postgres:16
-    environment:
-      POSTGRES_USER: chat_agent
-      POSTGRES_PASSWORD: chat_agent
-      POSTGRES_DB: chat_agent
+  chat-agent:
+    build:
+      context: .
+      args:
+        GOPROXY: https://goproxy.cn,direct
+    image: chat-agent:local
+    container_name: chat-agent
+    restart: unless-stopped
     ports:
-      - "5432:5432"
-    volumes:
-      - chat-agent-postgres:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U chat_agent -d chat_agent"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-
-volumes:
-  chat-agent-postgres:
+      - "127.0.0.1:9998:9998"
+    env_file:
+      - .env
+    environment:
+      SERVER_PORT: "9998"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
