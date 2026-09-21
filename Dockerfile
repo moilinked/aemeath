@@ -1,6 +1,7 @@
-# syntax=docker/dockerfile:1
+ARG GO_IMAGE=docker.m.daocloud.io/library/golang:1.25-bookworm
+ARG RUNTIME_IMAGE=docker.m.daocloud.io/library/alpine:3.22
 
-FROM golang:1.25-bookworm AS build
+FROM ${GO_IMAGE} AS build
 
 WORKDIR /src
 
@@ -16,7 +17,7 @@ RUN go mod download
 COPY . .
 RUN go build -ldflags="-s -w" -o /out/chat-agent ./cmd/server
 
-FROM alpine:3.22
+FROM ${RUNTIME_IMAGE}
 
 RUN apk add --no-cache ca-certificates tzdata wget \
     && adduser -D -H -u 65532 chatagent
