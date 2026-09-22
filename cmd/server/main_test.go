@@ -5,11 +5,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ecol/chat-agent/internal/auth"
 	"github.com/ecol/chat-agent/internal/config"
 	"github.com/ecol/chat-agent/internal/conversation"
 	"github.com/ecol/chat-agent/internal/llm"
-	"golang.org/x/crypto/bcrypt"
 )
 
 func TestNewLLMClient(t *testing.T) {
@@ -119,10 +117,6 @@ func TestNewAgent(t *testing.T) {
 }
 
 func TestNewAuthService(t *testing.T) {
-	passwordHash, err := bcrypt.GenerateFromPassword([]byte("test-password"), bcrypt.MinCost)
-	if err != nil {
-		t.Fatalf("bcrypt.GenerateFromPassword() error = %v", err)
-	}
 	tests := []struct {
 		name    string
 		config  config.AuthConfig
@@ -132,7 +126,6 @@ func TestNewAuthService(t *testing.T) {
 			name: "valid configuration",
 			config: config.AuthConfig{
 				SigningKey: "0123456789abcdef0123456789abcdef",
-				AccessTTL:  time.Hour,
 				Issuer:     "test-issuer",
 			},
 		},
@@ -140,23 +133,13 @@ func TestNewAuthService(t *testing.T) {
 			name: "short signing key",
 			config: config.AuthConfig{
 				SigningKey: "short",
-				AccessTTL:  time.Hour,
 				Issuer:     "test-issuer",
 			},
 		},
 		{
 			name: "missing signing key",
 			config: config.AuthConfig{
-				AccessTTL: time.Hour,
-				Issuer:    "test-issuer",
-			},
-			wantErr: true,
-		},
-		{
-			name: "invalid TTL",
-			config: config.AuthConfig{
-				SigningKey: "0123456789abcdef0123456789abcdef",
-				Issuer:     "test-issuer",
+				Issuer: "test-issuer",
 			},
 			wantErr: true,
 		},
@@ -164,34 +147,14 @@ func TestNewAuthService(t *testing.T) {
 			name: "missing issuer",
 			config: config.AuthConfig{
 				SigningKey: "0123456789abcdef0123456789abcdef",
-				AccessTTL:  time.Hour,
-			},
-			wantErr: true,
-		},
-		{
-			name: "missing user store",
-			config: config.AuthConfig{
-				SigningKey: "0123456789abcdef0123456789abcdef",
-				AccessTTL:  time.Hour,
-				Issuer:     "test-issuer",
 			},
 			wantErr: true,
 		},
 	}
 
-	users := auth.StaticUserStore{
-		User: auth.User{
-			Username:     "test-user",
-			PasswordHash: passwordHash,
-		},
-	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			var store auth.UserStore
-			if test.name != "missing user store" {
-				store = users
-			}
-			_, err := newAuthService(test.config, store)
+			_, err := newAuthService(test.config)
 			if test.wantErr && err == nil {
 				t.Fatal("newAuthService() error = nil, want an error")
 			}

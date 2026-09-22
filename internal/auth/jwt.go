@@ -2,15 +2,14 @@ package auth
 
 import (
 	"context"
-	"errors"
-	"fmt"
 	"strings"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
 )
 
-// Verify 校验 JWT 签名、算法、issuer、时间声明，并确认用户仍存在。
+// Verify 校验 JWT 签名、算法、issuer 与时间声明。
+// 用户表在 site 库，chat-agent 只验 site 签发的 token，不再查本地用户。
 func (service *Service) Verify(
 	ctx context.Context,
 	tokenValue string,
@@ -22,7 +21,7 @@ func (service *Service) Verify(
 		return Identity{}, ErrInvalidToken
 	}
 
-	claims := &jwt.RegisteredClaims{}
+	claims := &Claims{}
 	token, err := jwt.ParseWithClaims(
 		tokenValue,
 		claims,
@@ -42,28 +41,20 @@ func (service *Service) Verify(
 	}
 	if claims.Subject == "" ||
 		claims.IssuedAt == nil ||
-		claims.ExpiresAt == nil ||
-		claims.ID == "" {
+		claims.ExpiresAt == nil {
 		return Identity{}, ErrInvalidToken
 	}
 
-	user, err := service.users.FindByUsername(ctx, claims.Subject)
-	if errors.Is(err, ErrUserNotFound) {
-		return Identity{}, ErrInvalidToken
-	}
-	if err != nil {
-		return Identity{}, fmt.Errorf("lookup user: %w", err)
-	}
-	if user.Username != claims.Subject {
-		return Identity{}, ErrInvalidToken
+	username := strings.TrimSpace(claims.Username)
+	if username == "" {
+		username = claims.Subject
 	}
 	if err := ctx.Err(); err != nil {
 		return Identity{}, err
 	}
 	return Identity{
-		ID:        user.ID,
-		Username:  user.Username,
-		CreatedAt: user.CreatedAt,
-		UpdatedAt: user.UpdatedAt,
+		ID:           claims.Subject,
+		Username:     username,
+		Capabilities: claims.Capabilities,
 	}, nil
 }

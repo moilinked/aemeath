@@ -9,60 +9,17 @@ import (
 	"testing"
 
 	"github.com/ecol/chat-agent/internal/agent"
-	"github.com/ecol/chat-agent/internal/auth"
 	"github.com/ecol/chat-agent/internal/llm"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"golang.org/x/crypto/bcrypt"
 )
 
-func TestUserAndConversationStore(t *testing.T) {
+func TestConversationStore(t *testing.T) {
 	pool := testPool(t)
 	t.Cleanup(pool.Close)
 
 	ctx := context.Background()
 	if err := Migrate(ctx, pool); err != nil {
 		t.Fatalf("Migrate() error = %v", err)
-	}
-
-	username := fmt.Sprintf("user-%s", t.Name())
-	passwordHash, err := bcrypt.GenerateFromPassword([]byte("test-password"), bcrypt.MinCost)
-	if err != nil {
-		t.Fatalf("GenerateFromPassword() error = %v", err)
-	}
-
-	if _, err := pool.Exec(
-		ctx,
-		`INSERT INTO users (id, username, password_hash) VALUES ($1, $2, $3)`,
-		fmt.Sprintf("id-%s", t.Name()),
-		username,
-		string(passwordHash),
-	); err != nil {
-		t.Fatalf("insert test user: %v", err)
-	}
-
-	users := NewUserStore(pool)
-
-	found, err := users.FindByUsername(ctx, username)
-	if err != nil {
-		t.Fatalf("FindByUsername() error = %v", err)
-	}
-	wantID := fmt.Sprintf("id-%s", t.Name())
-	if found.ID != wantID {
-		t.Fatalf("FindByUsername() id = %q, want %q", found.ID, wantID)
-	}
-	if found.Username != username {
-		t.Fatalf("FindByUsername() username = %q, want %q", found.Username, username)
-	}
-	if found.CreatedAt.IsZero() || found.UpdatedAt.IsZero() {
-		t.Fatal("FindByUsername() timestamps are zero")
-	}
-	if err := bcrypt.CompareHashAndPassword(found.PasswordHash, []byte("test-password")); err != nil {
-		t.Fatalf("stored password hash does not match: %v", err)
-	}
-
-	_, err = users.FindByUsername(ctx, username+"-missing")
-	if !errors.Is(err, auth.ErrUserNotFound) {
-		t.Fatalf("FindByUsername() missing error = %v, want ErrUserNotFound", err)
 	}
 
 	conversations := NewConversationStore(pool)
@@ -114,15 +71,6 @@ func TestUserAndConversationStore(t *testing.T) {
 	}
 
 	otherID := fmt.Sprintf("other-%s", t.Name())
-	if _, err := pool.Exec(
-		ctx,
-		`INSERT INTO users (id, username, password_hash) VALUES ($1, $2, $3)`,
-		otherID,
-		fmt.Sprintf("other-%s", t.Name()),
-		string(passwordHash),
-	); err != nil {
-		t.Fatalf("insert other test user: %v", err)
-	}
 	if _, _, err := conversations.GetForUser(ctx, otherID, created.ID); !errors.Is(err, agent.ErrConversationNotFound) {
 		t.Fatalf("GetForUser() foreign error = %v, want ErrConversationNotFound", err)
 	}
@@ -198,11 +146,6 @@ func TestStoresHonorCanceledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	users := NewUserStore(pool)
-	if _, err := users.FindByUsername(ctx, "anyone"); !errors.Is(err, context.Canceled) {
-		t.Fatalf("FindByUsername() error = %v, want context.Canceled", err)
-	}
-
 	conversations := NewConversationStore(pool)
 	if _, err := conversations.Load(ctx, "conversation"); !errors.Is(err, context.Canceled) {
 		t.Fatalf("Load() error = %v, want context.Canceled", err)
@@ -214,22 +157,22 @@ func TestStoresHonorCanceledContext(t *testing.T) {
 		t.Fatalf("Append() error = %v, want context.Canceled", err)
 	}
 	if _, err := conversations.Create(ctx, "user", "title"); !errors.Is(err, context.Canceled) {
-		t.Fatalf("Create() error = %v, want context.Canceled", err)
+		t.Fatalf("Create() error = %v", err)
 	}
 	if _, _, err := conversations.GetForUser(ctx, "user", "conversation"); !errors.Is(err, context.Canceled) {
 		t.Fatalf("GetForUser() error = %v, want context.Canceled", err)
 	}
 	if _, err := conversations.ListForUser(ctx, "user"); !errors.Is(err, context.Canceled) {
-		t.Fatalf("ListForUser() error = %v, want context.Canceled", err)
+		t.Fatalf("ListForUser() error = %v", err)
 	}
 	if _, err := conversations.UpdateTitleForUser(ctx, "user", "conversation", "title"); !errors.Is(err, context.Canceled) {
-		t.Fatalf("UpdateTitleForUser() error = %v, want context.Canceled", err)
+		t.Fatalf("UpdateTitleForUser() error = %v", err)
 	}
 	if _, err := conversations.ClearMessagesForUser(ctx, "user", "conversation"); !errors.Is(err, context.Canceled) {
-		t.Fatalf("ClearMessagesForUser() error = %v, want context.Canceled", err)
+		t.Fatalf("ClearMessagesForUser() error = %v", err)
 	}
 	if err := conversations.DeleteForUser(ctx, "user", "conversation"); !errors.Is(err, context.Canceled) {
-		t.Fatalf("DeleteForUser() error = %v, want context.Canceled", err)
+		t.Fatalf("DeleteForUser() error = %v", err)
 	}
 }
 

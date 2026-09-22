@@ -1,6 +1,6 @@
 # Linux 服务器部署 PostgreSQL
 
-本文说明如何在 Linux 上安装 PostgreSQL 16，并让本机运行的 Chat Agent 通过 `DATABASE_URL` 远程连接。应用启动时会自动执行迁移，**不必**在服务器上手动建 `users` / `conversations` 表。登录账号只存在于数据库中，不要写入文档。
+本文说明如何在 Linux 上安装 PostgreSQL 16，并让本机运行的 Chat Agent 通过 `DATABASE_URL` 远程连接。应用启动时会自动执行迁移，**不必**在服务器上手动建 `conversations` 表。用户账号在 site 库，不要写入本文。
 
 以下以 Ubuntu 22.04 / 24.04 为例。命令需在服务器上以 `root` 或具有 `sudo` 的用户执行。
 
@@ -105,7 +105,7 @@ go run -buildvcs=false ./cmd/server
 sudo -u postgres psql -d chat_agent -c '\dt'
 ```
 
-预期包含 `schema_migrations`、`users`、`conversations`。
+预期包含 `schema_migrations`、`conversations`。
 
 ## 7. 常见问题
 
@@ -128,4 +128,4 @@ ss -lntp | grep 5432
 - 业务密码使用随机强密码，不要提交到 Git。
 - `pg_hba.conf` 按 IP 收紧，不要对 `0.0.0.0/0` 开放。
 - 生产环境优先启用 SSL，并将 `sslmode` 设为 `require`。
-- 登录账号只保存在 `users` 表中，不要把登录用户名或密码写入文档、`.env.example` 或版本控制。
+- 用户账号在 site 库，不要把登录用户名或密码写入文档、`.env.example` 或版本控制。

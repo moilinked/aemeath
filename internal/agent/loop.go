@@ -45,6 +45,7 @@ func (agent *Agent) Run(
 
 // RunStream 执行与 Run 相同的 Agent Loop，并通过 emit 回传增量、工具调用和工具结果。
 // 客户端断开导致的 context 取消会停止后续 LLM 请求和工具执行。
+// 发给模型的请求只使用独立的模型凭证，不得包含用户 JWT。
 func (agent *Agent) RunStream(
 	ctx context.Context,
 	conversationID string,

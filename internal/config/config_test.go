@@ -30,7 +30,6 @@ func TestLoad(t *testing.T) {
 		openAIBaseURL        string
 		openAIModel          string
 		jwtSecret            string
-		jwtAccessTTL         string
 		jwtIssuer            string
 		missingJWTSecret     bool
 		databaseURL          string
@@ -58,7 +57,6 @@ func TestLoad(t *testing.T) {
 			wantAgent: defaultWantAgent(defaultAgentMaxSteps),
 			wantAuth: AuthConfig{
 				SigningKey: testJWTSecret,
-				AccessTTL:  defaultJWTAccessTTL,
 				Issuer:     defaultJWTIssuer,
 			},
 		},
@@ -79,7 +77,6 @@ func TestLoad(t *testing.T) {
 			openAIBaseURL:        "https://gateway.example.com/v1",
 			openAIModel:          "chat-gpt-luna",
 			jwtSecret:            "abcdef0123456789abcdef0123456789",
-			jwtAccessTTL:         "30m",
 			jwtIssuer:            "test-issuer",
 			wantAddress:          "127.0.0.1:9090",
 			wantTimeout:          20 * time.Second,
@@ -100,7 +97,6 @@ func TestLoad(t *testing.T) {
 			},
 			wantAuth: AuthConfig{
 				SigningKey: "abcdef0123456789abcdef0123456789",
-				AccessTTL:  30 * time.Minute,
 				Issuer:     "test-issuer",
 			},
 		},
@@ -121,7 +117,6 @@ func TestLoad(t *testing.T) {
 			wantAgent: defaultWantAgent(defaultAgentMaxSteps),
 			wantAuth: AuthConfig{
 				SigningKey: testJWTSecret,
-				AccessTTL:  defaultJWTAccessTTL,
 				Issuer:     defaultJWTIssuer,
 			},
 		},
@@ -197,19 +192,8 @@ func TestLoad(t *testing.T) {
 			wantAgent: defaultWantAgent(defaultAgentMaxSteps),
 			wantAuth: AuthConfig{
 				SigningKey: "short",
-				AccessTTL:  defaultJWTAccessTTL,
 				Issuer:     defaultJWTIssuer,
 			},
-		},
-		{
-			name:         "rejects invalid JWT access TTL",
-			jwtAccessTTL: "invalid",
-			wantErr:      true,
-		},
-		{
-			name:         "rejects non-positive JWT access TTL",
-			jwtAccessTTL: "0s",
-			wantErr:      true,
 		},
 		{
 			name:      "rejects blank JWT issuer",
@@ -266,7 +250,6 @@ func TestLoad(t *testing.T) {
 				signingKey = ""
 			}
 			t.Setenv("JWT_SECRET", signingKey)
-			t.Setenv("JWT_ACCESS_TTL", tt.jwtAccessTTL)
 			t.Setenv("JWT_ISSUER", tt.jwtIssuer)
 			databaseURL := testDatabaseURL
 			if tt.databaseURL != "" {
@@ -310,13 +293,6 @@ func TestLoad(t *testing.T) {
 			}
 			if cfg.Auth.SigningKey != tt.wantAuth.SigningKey {
 				t.Error("Auth signing key does not match expected value")
-			}
-			if cfg.Auth.AccessTTL != tt.wantAuth.AccessTTL {
-				t.Errorf(
-					"Auth access TTL = %s, want %s",
-					cfg.Auth.AccessTTL,
-					tt.wantAuth.AccessTTL,
-				)
 			}
 			if cfg.Auth.Issuer != tt.wantAuth.Issuer {
 				t.Errorf("Auth issuer = %q, want %q", cfg.Auth.Issuer, tt.wantAuth.Issuer)

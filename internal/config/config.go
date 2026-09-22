@@ -30,8 +30,7 @@ const (
 	defaultLLMRetryAttempts     = 3
 	defaultLLMRetryInitial      = 200 * time.Millisecond
 	defaultLLMRetryMax          = 2 * time.Second
-	defaultJWTAccessTTL         = 7 * 24 * time.Hour
-	defaultJWTIssuer            = "chat-agent"
+	defaultJWTIssuer            = "site"
 )
 
 // LLMProvider 表示当前启用的模型供应商。
@@ -65,10 +64,10 @@ type AgentConfig struct {
 }
 
 // AuthConfig 包含 JWT Access Token 配置。
+// SigningKey 必须与 site 相同；Issuer 默认为 site。
 // SigningKey 只从环境变量读取，禁止写入日志或提交到版本控制。
 type AuthConfig struct {
 	SigningKey string
-	AccessTTL  time.Duration
 	Issuer     string
 }
 
@@ -301,25 +300,12 @@ func loadAuthConfig() (AuthConfig, error) {
 		return AuthConfig{}, errors.New("JWT_SECRET is required")
 	}
 
-	accessTTL := defaultJWTAccessTTL
-	if value := os.Getenv("JWT_ACCESS_TTL"); value != "" {
-		parsed, err := time.ParseDuration(value)
-		if err != nil {
-			return AuthConfig{}, fmt.Errorf("parse JWT_ACCESS_TTL: %w", err)
-		}
-		if parsed <= 0 {
-			return AuthConfig{}, errors.New("JWT_ACCESS_TTL must be greater than zero")
-		}
-		accessTTL = parsed
-	}
-
 	issuer := strings.TrimSpace(envOrDefault("JWT_ISSUER", defaultJWTIssuer))
 	if issuer == "" {
 		return AuthConfig{}, errors.New("JWT_ISSUER is required")
 	}
 	return AuthConfig{
 		SigningKey: signingKey,
-		AccessTTL:  accessTTL,
 		Issuer:     issuer,
 	}, nil
 }

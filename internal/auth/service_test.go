@@ -3,12 +3,10 @@ package auth
 import (
 	"context"
 	"errors"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
-	"golang.org/x/crypto/bcrypt"
 )
 
 const (
@@ -17,14 +15,11 @@ const (
 )
 
 var (
-	testSigningKey    = []byte("0123456789abcdef0123456789abcdef")
-	testNow           = time.Date(2026, time.August, 20, 8, 0, 0, 0, time.UTC)
-	testUserCreatedAt = time.Date(2026, time.August, 1, 0, 0, 0, 0, time.UTC)
-	testUserUpdatedAt = time.Date(2026, time.August, 2, 0, 0, 0, 0, time.UTC)
+	testSigningKey = []byte("0123456789abcdef0123456789abcdef")
+	testNow        = time.Date(2026, time.August, 20, 8, 0, 0, 0, time.UTC)
 )
 
 func TestNewRejectsInvalidConfig(t *testing.T) {
-	users := staticUsersForTest(t)
 	tests := []struct {
 		name   string
 		config Config
@@ -32,35 +27,14 @@ func TestNewRejectsInvalidConfig(t *testing.T) {
 		{
 			name: "missing signing key",
 			config: Config{
-				Users:     users,
-				AccessTTL: time.Hour,
-				Issuer:    "test",
+				Issuer: "test",
 			},
 		},
 		{
-			name: "non-positive TTL",
+			name: "missing issuer",
 			config: Config{
-				Users:      users,
 				SigningKey: testSigningKey,
-				AccessTTL:  0,
-				Issuer:     "test",
-			},
-		},
-		{
-			name: "blank issuer",
-			config: Config{
-				Users:      users,
-				SigningKey: testSigningKey,
-				AccessTTL:  time.Hour,
 				Issuer:     " ",
-			},
-		},
-		{
-			name: "missing user store",
-			config: Config{
-				SigningKey: testSigningKey,
-				AccessTTL:  time.Hour,
-				Issuer:     "test",
 			},
 		},
 	}
@@ -77,9 +51,7 @@ func TestNewRejectsInvalidConfig(t *testing.T) {
 
 func TestNewAcceptsShortSigningKey(t *testing.T) {
 	service, err := New(Config{
-		Users:      staticUsersForTest(t),
 		SigningKey: []byte("short"),
-		AccessTTL:  time.Hour,
 		Issuer:     "test",
 	})
 	if err != nil {
@@ -90,94 +62,80 @@ func TestNewAcceptsShortSigningKey(t *testing.T) {
 	}
 }
 
-func TestAuthenticateAndVerify(t *testing.T) {
+func TestVerifySiteToken(t *testing.T) {
 	service := newTestService(t)
+	token := signedClaimsToken(t, testSigningKey, Claims{
+		RegisteredClaims: jwt.RegisteredClaims{
+			Issuer:    "test-issuer",
+			Subject:   testUserID,
+			ExpiresAt: jwt.NewNumericDate(testNow.Add(time.Hour)),
+			IssuedAt:  jwt.NewNumericDate(testNow),
+		},
+		Username: testUsername,
+		Capabilities: Capabilities{
+			Chat:        true,
+			ManageSite:  true,
+			ManageUsers: false,
+		},
+	})
 
-	token, err := service.Authenticate(
-		context.Background(),
-		testUsername,
-		defaultPasswordForTest(),
-	)
-	if err != nil {
-		t.Fatalf("Authenticate() error = %v", err)
-	}
-	if token.Value == "" {
-		t.Fatal("Authenticate() token is empty")
-	}
-	if !token.ExpiresAt.Equal(testNow.Add(time.Hour)) {
-		t.Fatalf("ExpiresAt = %s, want %s", token.ExpiresAt, testNow.Add(time.Hour))
-	}
-
-	identity, err := service.Verify(context.Background(), token.Value)
+	identity, err := service.Verify(context.Background(), token)
 	if err != nil {
 		t.Fatalf("Verify() error = %v", err)
-	}
-	if identity.Username != testUsername {
-		t.Fatalf("Verify() username = %q, want %q", identity.Username, testUsername)
 	}
 	if identity.ID != testUserID {
 		t.Fatalf("Verify() id = %q, want %q", identity.ID, testUserID)
 	}
-	if !identity.CreatedAt.Equal(testUserCreatedAt) {
-		t.Fatalf("Verify() created_at = %s, want %s", identity.CreatedAt, testUserCreatedAt)
+	if identity.Username != testUsername {
+		t.Fatalf("Verify() username = %q, want %q", identity.Username, testUsername)
 	}
-	if !identity.UpdatedAt.Equal(testUserUpdatedAt) {
-		t.Fatalf("Verify() updated_at = %s, want %s", identity.UpdatedAt, testUserUpdatedAt)
+	if !identity.CanChat() {
+		t.Fatal("Verify() CanChat() = false, want true")
+	}
+	if !identity.Capabilities.CanManageSite() {
+		t.Fatal("Verify() CanManageSite() = false, want true")
+	}
+	if identity.Capabilities.CanManageUsers() {
+		t.Fatal("Verify() CanManageUsers() = true, want false")
 	}
 }
 
-func TestAuthenticateRejectsInvalidCredentials(t *testing.T) {
-	tests := []struct {
-		name     string
-		username string
-		password string
-	}{
-		{
-			name:     "wrong username",
-			username: "unknown",
-			password: defaultPasswordForTest(),
-		},
-		{
-			name:     "wrong password",
-			username: testUsername,
-			password: "wrong-password",
-		},
-	}
-
+func TestVerifyAcceptsTokenWithoutChatCapability(t *testing.T) {
 	service := newTestService(t)
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			_, err := service.Authenticate(
-				context.Background(),
-				test.username,
-				test.password,
-			)
-			if !errors.Is(err, ErrInvalidCredentials) {
-				t.Fatalf("Authenticate() error = %v, want ErrInvalidCredentials", err)
-			}
-			if strings.Contains(err.Error(), test.username) ||
-				strings.Contains(err.Error(), test.password) {
-				t.Fatal("Authenticate() error exposes supplied credentials")
-			}
-		})
+	token := signedClaimsToken(t, testSigningKey, Claims{
+		RegisteredClaims: jwt.RegisteredClaims{
+			Issuer:    "test-issuer",
+			Subject:   testUserID,
+			ExpiresAt: jwt.NewNumericDate(testNow.Add(time.Hour)),
+			IssuedAt:  jwt.NewNumericDate(testNow),
+		},
+		Username: testUsername,
+	})
+	identity, err := service.Verify(context.Background(), token)
+	if err != nil {
+		t.Fatalf("Verify() error = %v", err)
+	}
+	if identity.CanChat() {
+		t.Fatal("Verify() CanChat() = true, want false")
 	}
 }
 
 func TestVerifyRejectsInvalidTokens(t *testing.T) {
 	validService := newTestService(t)
-	validToken, err := validService.Authenticate(
-		context.Background(),
-		testUsername,
-		defaultPasswordForTest(),
-	)
-	if err != nil {
-		t.Fatalf("Authenticate() error = %v", err)
-	}
+	validToken := signedClaimsToken(t, testSigningKey, Claims{
+		RegisteredClaims: jwt.RegisteredClaims{
+			Issuer:    "test-issuer",
+			Subject:   testUserID,
+			ExpiresAt: jwt.NewNumericDate(testNow.Add(time.Hour)),
+			IssuedAt:  jwt.NewNumericDate(testNow),
+			ID:        "token-id",
+		},
+		Username:     testUsername,
+		Capabilities: Capabilities{Chat: true},
+	})
 
 	wrongKeyService, err := New(Config{
-		Users:      staticUsersForTest(t),
 		SigningKey: []byte("abcdef0123456789abcdef0123456789"),
-		AccessTTL:  time.Hour,
 		Issuer:     "test-issuer",
 	})
 	if err != nil {
@@ -195,37 +153,15 @@ func TestVerifyRejectsInvalidTokens(t *testing.T) {
 	}{
 		{name: "empty", service: validService, token: ""},
 		{name: "malformed", service: validService, token: "not-a-token"},
-		{name: "tampered", service: validService, token: validToken.Value + "x"},
-		{name: "wrong signature", service: wrongKeyService, token: validToken.Value},
-		{name: "expired", service: expiredService, token: validToken.Value},
+		{name: "tampered", service: validService, token: validToken + "x"},
+		{name: "wrong signature", service: wrongKeyService, token: validToken},
+		{name: "expired", service: expiredService, token: validToken},
 		{
 			name:    "wrong issuer",
 			service: validService,
 			token: signedToken(t, testSigningKey, jwt.SigningMethodHS256, jwt.RegisteredClaims{
 				Issuer:    "wrong-issuer",
-				Subject:   testUsername,
-				ExpiresAt: jwt.NewNumericDate(testNow.Add(time.Hour)),
-				IssuedAt:  jwt.NewNumericDate(testNow),
-				ID:        "token-id",
-			}),
-		},
-		{
-			name:    "wrong subject",
-			service: validService,
-			token: signedToken(t, testSigningKey, jwt.SigningMethodHS256, jwt.RegisteredClaims{
-				Issuer:    "test-issuer",
-				Subject:   "other-user",
-				ExpiresAt: jwt.NewNumericDate(testNow.Add(time.Hour)),
-				IssuedAt:  jwt.NewNumericDate(testNow),
-				ID:        "token-id",
-			}),
-		},
-		{
-			name:    "missing token ID",
-			service: validService,
-			token: signedToken(t, testSigningKey, jwt.SigningMethodHS256, jwt.RegisteredClaims{
-				Issuer:    "test-issuer",
-				Subject:   testUsername,
+				Subject:   testUserID,
 				ExpiresAt: jwt.NewNumericDate(testNow.Add(time.Hour)),
 				IssuedAt:  jwt.NewNumericDate(testNow),
 			}),
@@ -239,10 +175,9 @@ func TestVerifyRejectsInvalidTokens(t *testing.T) {
 				jwt.SigningMethodNone,
 				jwt.RegisteredClaims{
 					Issuer:    "test-issuer",
-					Subject:   testUsername,
+					Subject:   testUserID,
 					ExpiresAt: jwt.NewNumericDate(testNow.Add(time.Hour)),
 					IssuedAt:  jwt.NewNumericDate(testNow),
-					ID:        "token-id",
 				},
 			),
 		},
@@ -260,25 +195,20 @@ func TestVerifyRejectsInvalidTokens(t *testing.T) {
 
 func TestServiceHonorsCanceledContext(t *testing.T) {
 	service := newTestService(t)
-	token, err := service.Authenticate(
-		context.Background(),
-		testUsername,
-		defaultPasswordForTest(),
-	)
-	if err != nil {
-		t.Fatalf("Authenticate() error = %v", err)
-	}
+	token := signedClaimsToken(t, testSigningKey, Claims{
+		RegisteredClaims: jwt.RegisteredClaims{
+			Issuer:    "test-issuer",
+			Subject:   testUserID,
+			ExpiresAt: jwt.NewNumericDate(testNow.Add(time.Hour)),
+			IssuedAt:  jwt.NewNumericDate(testNow),
+		},
+		Username: testUsername,
+	})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	if _, err := service.Authenticate(ctx, testUsername, defaultPasswordForTest()); !errors.Is(
-		err,
-		context.Canceled,
-	) {
-		t.Fatalf("Authenticate() error = %v, want context.Canceled", err)
-	}
-	if _, err := service.Verify(ctx, token.Value); !errors.Is(err, context.Canceled) {
+	if _, err := service.Verify(ctx, token); !errors.Is(err, context.Canceled) {
 		t.Fatalf("Verify() error = %v, want context.Canceled", err)
 	}
 }
@@ -287,9 +217,7 @@ func newTestService(t *testing.T) *Service {
 	t.Helper()
 
 	service, err := New(Config{
-		Users:      staticUsersForTest(t),
 		SigningKey: testSigningKey,
-		AccessTTL:  time.Hour,
 		Issuer:     "test-issuer",
 	})
 	if err != nil {
@@ -299,24 +227,11 @@ func newTestService(t *testing.T) *Service {
 	return service
 }
 
-func staticUsersForTest(t *testing.T) UserStore {
-	t.Helper()
-	return StaticUserStore{
-		User: User{
-			ID:           testUserID,
-			Username:     testUsername,
-			PasswordHash: passwordHashForTest(t),
-			CreatedAt:    testUserCreatedAt,
-			UpdatedAt:    testUserUpdatedAt,
-		},
-	}
-}
-
 func signedToken(
 	t *testing.T,
 	signingKey any,
 	method jwt.SigningMethod,
-	claims jwt.RegisteredClaims,
+	claims jwt.Claims,
 ) string {
 	t.Helper()
 
@@ -327,19 +242,7 @@ func signedToken(
 	return value
 }
 
-func defaultPasswordForTest() string {
-	return "test-password"
-}
-
-func passwordHashForTest(t *testing.T) []byte {
+func signedClaimsToken(t *testing.T, signingKey any, claims jwt.Claims) string {
 	t.Helper()
-
-	hash, err := bcrypt.GenerateFromPassword(
-		[]byte(defaultPasswordForTest()),
-		bcrypt.MinCost,
-	)
-	if err != nil {
-		t.Fatalf("GenerateFromPassword() error = %v", err)
-	}
-	return hash
+	return signedToken(t, signingKey, jwt.SigningMethodHS256, claims)
 }

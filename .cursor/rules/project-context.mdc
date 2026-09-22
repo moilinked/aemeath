@@ -14,7 +14,9 @@ alwaysApply: true
 - 已有 HTTP 服务、健康检查、环境配置、优雅关闭和基础测试。
 - LLM 层使用自定义 `Client` 接口和 OpenAI Chat Completions 兼容客户端。
 - 预期连接 `chat-gpt-luna` 网关模型及 DeepSeek V4。
-- 已实现 Agent Loop、PostgreSQL 用户与 Conversation、JWT 登录和受保护的 Chat API。
+- 已实现 Agent Loop、PostgreSQL Conversation、site JWT 校验和受保护的 Chat API。
+- 用户表在 site 库；chat-agent 验 `iss=site` 的 token，对话接口要求 `CanChat`。
+- 当前用户资料由 site `/api/auth/me` 提供。
 - 尚未实现 Web UI。
 
 # 架构边界

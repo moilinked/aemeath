@@ -48,8 +48,6 @@ func run() error {
 		return fmt.Errorf("migrate postgres: %w", err)
 	}
 
-	userStore := postgres.NewUserStore(pool)
-
 	llmClient, err := newLLMClient(cfg.LLM)
 	if err != nil {
 		return err
@@ -61,7 +59,7 @@ func run() error {
 		return err
 	}
 
-	authService, err := newAuthService(cfg.Auth, userStore)
+	authService, err := newAuthService(cfg.Auth)
 	if err != nil {
 		return err
 	}
@@ -134,11 +132,9 @@ func newAgent(
 	return chatAgent, nil
 }
 
-func newAuthService(cfg config.AuthConfig, users auth.UserStore) (*auth.Service, error) {
+func newAuthService(cfg config.AuthConfig) (*auth.Service, error) {
 	service, err := auth.New(auth.Config{
-		Users:      users,
 		SigningKey: []byte(cfg.SigningKey),
-		AccessTTL:  cfg.AccessTTL,
 		Issuer:     cfg.Issuer,
 	})
 	if err != nil {

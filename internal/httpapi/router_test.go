@@ -6,14 +6,12 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/ecol/chat-agent/internal/agent"
 	"github.com/ecol/chat-agent/internal/auth"
 	"github.com/ecol/chat-agent/internal/conversation"
 	"github.com/ecol/chat-agent/internal/llm"
 	"github.com/ecol/chat-agent/internal/tools"
-	"golang.org/x/crypto/bcrypt"
 )
 
 func TestRouter(t *testing.T) {
@@ -132,25 +130,8 @@ func newHTTPTestAgent(t *testing.T) *agent.Agent {
 func newHTTPTestAuth(t *testing.T) *auth.Service {
 	t.Helper()
 
-	passwordHash, err := bcrypt.GenerateFromPassword(
-		[]byte(defaultHTTPTestPassword()),
-		bcrypt.MinCost,
-	)
-	if err != nil {
-		t.Fatalf("bcrypt.GenerateFromPassword() error = %v", err)
-	}
 	service, err := auth.New(auth.Config{
-		Users: auth.StaticUserStore{
-			User: auth.User{
-				ID:           testHTTPUserID,
-				Username:     testHTTPUsername,
-				PasswordHash: passwordHash,
-				CreatedAt:    testHTTPUserCreatedAt,
-				UpdatedAt:    testHTTPUserUpdatedAt,
-			},
-		},
 		SigningKey: []byte("0123456789abcdef0123456789abcdef"),
-		AccessTTL:  time.Hour,
 		Issuer:     "test-issuer",
 	})
 	if err != nil {

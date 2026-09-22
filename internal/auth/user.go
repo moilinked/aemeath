@@ -1,50 +1,24 @@
 package auth
 
-import (
-	"context"
-	"errors"
-	"strings"
-	"time"
-)
-
-// ErrUserNotFound 表示用户名在存储中不存在。
-var ErrUserNotFound = errors.New("user not found")
-
-// User 是认证与资料查询所需的用户记录。PasswordHash 只用于校验，不得进入 HTTP 响应。
-type User struct {
-	ID           string
-	Username     string
-	PasswordHash []byte
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
+// Capabilities 是 site 签发的 JWT 中的权限位。
+// chat-agent 只使用 CanChat；CanManageSite / CanManageUsers 由 site 解释。
+type Capabilities struct {
+	Chat        bool `json:"chat"`
+	ManageSite  bool `json:"manage_site"`
+	ManageUsers bool `json:"manage_users"`
 }
 
-// UserStore 按用户名查询凭据。未知用户必须返回 ErrUserNotFound。
-type UserStore interface {
-	FindByUsername(ctx context.Context, username string) (User, error)
+// CanChat 表示是否允许调用对话接口。
+func (capabilities Capabilities) CanChat() bool {
+	return capabilities.Chat
 }
 
-// StaticUserStore 是测试用的固定单用户存储。
-type StaticUserStore struct {
-	User User
+// CanManageSite 表示是否允许管理站点。chat-agent 不执行该检查。
+func (capabilities Capabilities) CanManageSite() bool {
+	return capabilities.ManageSite
 }
 
-// FindByUsername 返回固定用户，或在用户名不匹配时返回 ErrUserNotFound。
-func (store StaticUserStore) FindByUsername(
-	ctx context.Context,
-	username string,
-) (User, error) {
-	if err := ctx.Err(); err != nil {
-		return User{}, err
-	}
-	if strings.TrimSpace(store.User.Username) == "" || username != store.User.Username {
-		return User{}, ErrUserNotFound
-	}
-	return User{
-		ID:           store.User.ID,
-		Username:     store.User.Username,
-		PasswordHash: append([]byte(nil), store.User.PasswordHash...),
-		CreatedAt:    store.User.CreatedAt,
-		UpdatedAt:    store.User.UpdatedAt,
-	}, nil
+// CanManageUsers 表示是否允许管理用户。chat-agent 不执行该检查。
+func (capabilities Capabilities) CanManageUsers() bool {
+	return capabilities.ManageUsers
 }

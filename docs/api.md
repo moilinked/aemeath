@@ -2,7 +2,7 @@
 
 面向 Web / 客户端对接。默认服务地址 `http://localhost:8080`。当前没有 CORS，跨域需同源部署或由反向代理转发。
 
-登录账号只存在于数据库，本文不提供任何可登录凭据。
+Token 由 site 签发，本文不提供任何可登录凭据。
 
 ## 约定
 
@@ -10,17 +10,21 @@
 | --- | --- |
 | JSON | `Content-Type: application/json`；未知字段会 `400`；响应为 UTF-8，末尾带换行 |
 | 时间 | RFC3339，UTC |
-| 鉴权 | 除健康检查和登录外，均需 `Authorization: Bearer <access_token>` |
+| 鉴权 | 除健康检查外，均需 `Authorization: Bearer <access_token>`。Token 由 site 签发（`iss=site`），与 site 共用 `JWT_SECRET` |
 | 错误体 | `{"error":"<message>"}`；`401` 另带 `WWW-Authenticate: Bearer realm="api"` |
+| 对话权限 | 对话与 Chat 接口还要求 JWT `capabilities.chat`；没有则 `403` `chat is not allowed` |
 | 对话 ID | 由服务端生成（32 位 hex）。客户端只回传已收到的 ID，不可自造新 ID 来开对话 |
 | 历史 | 以服务端为准。Chat 请求只传本轮用户输入，不要回传整段 messages |
 
-公开接口：`GET /healthz`、`POST /api/auth/login`。其余 `/api/*` 均需登录。
+公开接口：`GET /healthz`。其余 `/api/*` 均需携带 site 签发的 Access Token，且 JWT 必须带 `capabilities.chat`。用户身份由 site 的 `/api/auth/me` 提供；chat-agent 只验 JWT、执行对话授权。
+
+用户 JWT 只用于调用本服务。发给模型的请求使用独立的 Agent Token / 模型 API Key，不会转发用户 Access Token。
 
 ## 推荐前端模型
 
 和 ChatGPT / Claude 一样：**对话是服务端资源**。
 
+0. 用 site 的 `GET /api/auth/me` 看 `capabilities.chat`。为 `false` 时隐藏 Chat 入口，也不要调本服务对话接口。
 1. 用户点「新对话」：本地清空消息，**不要**调 Chat。等用户发出第一条消息。
 2. 第一条消息：`POST /api/chat` 或 `/api/chat/stream`，**省略** `conversation_id`。
 3. 用响应里的 `conversation_id` 更新路由（建议 `/c/{id}`）和侧边栏。
@@ -29,12 +33,12 @@
 6. **不要**省略 ID 来「继续上次」——省略 ID 永远是新开对话。
 
 ```text
-登录 → 拉对话列表
+site 登录 → site GET /auth/me（无 chat 权限则隐藏 Chat）
          │
-         ├─ 点已有对话 → GET /conversations/{id} → 渲染 messages
-         │                    └─ 发送时带 conversation_id
-         │
-         └─ 新对话（本地空页）→ 首次发送不带 ID → 保存返回的 ID
+         └─ 有 chat 权限 → 拉对话列表
+               ├─ 点已有对话 → GET /conversations/{id} → 渲染 messages
+               │                    └─ 发送时带 conversation_id
+               └─ 新对话（本地空页）→ 首次发送不带 ID → 保存返回的 ID
 ```
 
 ## 接口一览
@@ -42,8 +46,6 @@
 | 方法 | 路径 | 鉴权 | 幂等键 | 说明 |
 | --- | --- | --- | --- | --- |
 | `GET` | `/healthz` | 否 | 否 | 健康检查 |
-| `POST` | `/api/auth/login` | 否 | 否 | 登录，换 Access Token |
-| `GET` | `/api/auth/me` | 是 | 否 | 当前用户 |
 | `GET` | `/api/conversations` | 是 | 否 | 对话列表（`updated_at` 倒序） |
 | `GET` | `/api/conversations/{id}` | 是 | 否 | 对话详情 + 消息 |
 | `PATCH` | `/api/conversations/{id}` | 是 | 否 | 修改对话标题 |
@@ -56,62 +58,15 @@
 
 ## 鉴权
 
-### `POST /api/auth/login`
-
-请求体上限 4 KiB。
-
-```http
-POST /api/auth/login
-Content-Type: application/json
-```
-
-```json
-{
-  "username": "<username>",
-  "password": "<password>"
-}
-```
-
-成功 `200`：
-
-```json
-{
-  "access_token": "<jwt>",
-  "token_type": "Bearer",
-  "expires_in": 604800
-}
-```
-
-`expires_in` 单位为秒，默认约 7 天（以服务端 `JWT_ACCESS_TTL` 为准）。请把 `access_token` 存到内存或安全存储；后续请求：
+后续请求：
 
 ```http
 Authorization: Bearer <access_token>
 ```
 
-| 状态 | `error` | 何时 |
-| --- | --- | --- |
-| 400 | `invalid JSON request body` | JSON 非法、多余字段、多个 JSON 值 |
-| 401 | `invalid username or password` | 用户名或密码错误（不区分哪种） |
-| 415 | `Content-Type must be application/json` | 不是 JSON |
-| 413 | `request body is too large` | 超过 4 KiB |
-| 500 | `authentication failed` | 服务内部错误 |
+Access Token 由 site 签发。请把它存到内存或安全存储，不要发给模型。
 
-登录成功响应带 `Cache-Control: no-store`。
-
-### `GET /api/auth/me`
-
-成功 `200`：
-
-```json
-{
-  "id": "<user_id>",
-  "username": "<username>",
-  "created_at": "<rfc3339>",
-  "updated_at": "<rfc3339>"
-}
-```
-
-不含密码、密码哈希，也不含 `conversation_id`。Token 缺失、格式错误或过期时 `401`，`error` 为 `valid Bearer token required`。
+当前用户与 `capabilities.chat` 由 **site** 的 `GET /api/auth/me` 返回。本服务不提供 `/api/auth/me`。没有 `capabilities.chat` 时，对话接口返回 `403` `chat is not allowed`。
 
 ## 对话
 
@@ -169,12 +124,13 @@ Authorization: Bearer <access_token>
 
 其它可选字段：`name`、`tool_call_id`、`tool_calls`、`reasoning_content`。空历史为 `[]`。
 
-未知 ID、已删除或不属于当前用户：**一律 `404`**，`error` 为 `conversation not found`，不要对 403 做分支。
+未知 ID、已删除或不属于当前用户：**一律 `404`**，`error` 为 `conversation not found`。没有 `capabilities.chat` 时是 `403`，与「对话不属于当前用户」无关。
 
 | 状态 | `error` |
 | --- | --- |
 | 400 | `conversation_id is invalid` |
 | 401 | `valid Bearer token required` |
+| 403 | `chat is not allowed` |
 | 404 | `conversation not found` |
 | 500 | `conversation request failed` |
 
@@ -216,6 +172,7 @@ Content-Type: application/json
 | 400 | `title is too long` | 超过 40 个字符 |
 | 400 | `invalid JSON request body` | JSON 非法、多余字段、多个 JSON 值 |
 | 401 | `valid Bearer token required` | 未登录或 Token 无效 |
+| 403 | `chat is not allowed` | Token 有效但没有 `capabilities.chat` |
 | 404 | `conversation not found` | 未知 / 他人 / 已删除 |
 | 415 | `Content-Type must be application/json` | 不是 JSON |
 | 413 | `request body is too large` | 超过 4 KiB |
@@ -245,6 +202,7 @@ Content-Type: application/json
 | --- | --- |
 | 400 | `conversation_id is invalid` |
 | 401 | `valid Bearer token required` |
+| 403 | `chat is not allowed` |
 | 404 | `conversation not found` |
 | 500 | `conversation request failed` |
 
@@ -320,6 +278,7 @@ Agent 失败且已写入缓存时（例如 `502`），同键重放会再次返�
 | 400 | `conversation_id is invalid` | ID 字符或长度不合法 |
 | 400 | `Idempotency-Key is required` 等 | 缺少或非法幂等键 |
 | 401 | `valid Bearer token required` | 未登录或 Token 无效 |
+| 403 | `chat is not allowed` | Token 有效但没有 `capabilities.chat` |
 | 404 | `conversation not found` | ID 不存在或不属于当前用户 |
 | 408 | `chat request canceled` | 请求被取消（非流式） |
 | 409 | 见上表 | 幂等冲突 |
@@ -377,21 +336,13 @@ data: {"conversation_id":"<id>","message":"128 × 39 = 4992"}
 ## 客户端注意点
 
 1. **新对话不要带旧 ID**，也不要省略 ID 指望续上最近一次。
-2. 侧边栏只信 `GET /api/conversations`，不要用 `/api/auth/me` 找当前对话。
+2. 用 **site** `GET /api/auth/me` 的 `capabilities.chat` 决定是否展示 Chat；侧边栏只信本服务 `GET /api/conversations`，不要用 `/me` 找当前对话。
 3. 渲染历史用详情接口的 `messages`，不要在本地另存一份当作权威数据。发给模型的上下文可能已按 token 预算裁掉旧轮次，**不会**改写库里的历史。
 4. 工具调用轮次会出现 `assistant`（带 `tool_calls`）和 `tool` 消息；UI 可折叠展示，不要当成普通聊天气泡重复渲染。
 5. 服务端暂无置顶、分页、分享链接。改标题用 `PATCH /api/conversations/{id}`。清空当前对话上下文（保留会话、丢掉历史）用 `DELETE /api/conversations/{id}/messages`。
 6. 幂等缓存在单进程内存：多副本部署时，重试必须打到同一实例才命中；重启后键失效，重试会再跑一轮。
 
 ## 调用示例
-
-登录（把用户名密码换成环境里的真实账号，不要写进仓库）：
-
-```bash
-curl -sS http://localhost:8080/api/auth/login \
-  -H "Content-Type: application/json" \
-  -d "{\"username\":\"<username>\",\"password\":\"<password>\"}"
-```
 
 新开对话（流式）：
 

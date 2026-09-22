@@ -22,7 +22,7 @@ func requireBearer(service AuthService) func(http.Handler) http.Handler {
 
 			identity, err := service.Verify(r.Context(), tokenValue)
 			if errors.Is(err, auth.ErrInvalidToken) ||
-				(err == nil && strings.TrimSpace(identity.Username) == "") {
+				(err == nil && ownerID(identity) == "") {
 				writeUnauthorized(w, "valid Bearer token required")
 				return
 			}
@@ -35,6 +35,17 @@ func requireBearer(service AuthService) func(http.Handler) http.Handler {
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
+}
+
+func requireCanChat(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		identity, ok := identityFromContext(r.Context())
+		if !ok || !identity.CanChat() {
+			writeForbidden(w, "chat is not allowed")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func bearerToken(header string) (string, bool) {

@@ -22,8 +22,8 @@
 - 使用 Open-Meteo、无需 API Key 的 Weather Tool
 - 组合 LLM、Conversation 和 Tools，并限制最大执行步数的 Agent
 - 支持工具错误回传、Token 汇总和对话持久化的 Agent Loop
-- PostgreSQL 用户存储、bcrypt 密码校验与 Bearer JWT 路由保护
-- 受登录保护的 `POST /api/chat`、SSE 流式 `POST /api/chat/stream`、Agent 错误映射与聊天幂等
+- site JWT 校验与 `CanChat` 对话权限；用户表在 site 库
+- 受 site JWT 保护的 `POST /api/chat`、SSE 流式 `POST /api/chat/stream`、Agent 错误映射与聊天幂等
 - 对话是服务端资源：省略 `conversation_id` 会新开对话，带上已有 ID 则续聊
 - `GET /api/conversations`、`GET /api/conversations/{id}` 与 `PATCH /api/conversations/{id}` 列出、读取、改标题当前用户的对话
 - `DELETE /api/conversations/{id}/messages` 清空当前对话消息并保留会话，后续不再把旧历史送进模型上下文
@@ -72,7 +72,7 @@ Agent Runtime
 - `agent` 负责编排 Prompt、Conversation、LLM 和 Tools。
 - `llm` 隔离具体模型供应商协议。
 - `conversation` 负责对话历史；生产使用 PostgreSQL，测试仍可使用内存存储。
-- `postgres` 负责连接池、迁移、UserStore 与 ConversationStore 实现。
+- `postgres` 负责连接池、迁移与 ConversationStore 实现。
 - `tools` 负责工具契约、注册和执行。
 - `config` 统一加载环境配置，业务包不直接读取 `.env`。
 
@@ -123,7 +123,7 @@ chat-agent/
 Copy-Item .env.example .env
 ```
 
-在 `.env` 中填写当前供应商对应的 API Key，并将 `DATABASE_URL` 改为 Linux 服务器上的 PostgreSQL 连接串（不要使用 `127.0.0.1`）。`.env` 已被 Git 忽略，禁止将真实密钥写入 `.env.example`。服务启动时会执行迁移。登录凭据与对话均读写远程数据库，不要把登录账号或密码写入文档。
+在 `.env` 中填写当前供应商对应的 API Key，并将 `DATABASE_URL` 改为 Linux 服务器上的 PostgreSQL 连接串（不要使用 `127.0.0.1`）。`.env` 已被 Git 忽略，禁止将真实密钥写入 `.env.example`。服务启动时会执行迁移。对话读写远程数据库；用户账号在 site 库。不要把登录账号或密码写入文档。
 
 Linux 服务器也可用 Docker 只跑后端（宿主机 PostgreSQL 仍用 `5432`，应用映射 `127.0.0.1:9998`）。步骤与 Nginx 日志路径见 [docs/deploy-docker-linux.md](docs/deploy-docker-linux.md)。
 
@@ -175,13 +175,11 @@ Invoke-RestMethod http://localhost:8080/healthz
 
 完整请求/响应、错误码、幂等和 SSE 解析见 [docs/api.md](docs/api.md)。
 
-公开接口：`GET /healthz`、`POST /api/auth/login`。其余 `/api/*` 需要 `Authorization: Bearer <access_token>`。`POST /api/chat` 与 `POST /api/chat/stream` 还必须带 `Idempotency-Key`。
+公开接口：`GET /healthz`。其余 `/api/*` 需要 site 签发的 `Authorization: Bearer <access_token>`（`iss=site`，与 site 共用 `JWT_SECRET`）。对话与 Chat 接口还要求 `capabilities.chat`。`POST /api/chat` 与 `POST /api/chat/stream` 还必须带 `Idempotency-Key`。前端根据 site `GET /api/auth/me` 的 `capabilities.chat` 隐藏 Chat 入口。
 
 | 方法     | 路径                               | 说明                                          |
 | -------- | ---------------------------------- | --------------------------------------------- |
 | `GET`    | `/healthz`                         | 健康检查                                      |
-| `POST`   | `/api/auth/login`                  | 登录                                          |
-| `GET`    | `/api/auth/me`                     | 当前用户（不含对话 ID）                       |
 | `GET`    | `/api/conversations`               | 当前用户对话列表                              |
 | `GET`    | `/api/conversations/{id}`          | 对话详情与消息历史                            |
 | `PATCH`  | `/api/conversations/{id}`          | 修改对话标题                                  |
@@ -212,9 +210,8 @@ Invoke-RestMethod http://localhost:8080/healthz
 | `AGENT_CONTEXT_TOKENS`       | `8192`                      | 单次 LLM 请求的估算 prompt token 上限；超出则丢掉最旧完整轮次        |
 | `AGENT_MAX_OUTPUT_TOKENS`    | `2048`                      | 单次回复的最大输出 token（`max_tokens`）                             |
 | `DATABASE_URL`               | 无                          | 远程 PostgreSQL 连接串，必填；格式见 `docs/deploy-postgres-linux.md` |
-| `JWT_SECRET`                 | 无                          | HS256 签名密钥，必填                                                 |
-| `JWT_ACCESS_TTL`             | `168h`                      | Access Token 有效期（7 天）                                          |
-| `JWT_ISSUER`                 | `chat-agent`                | JWT issuer                                                           |
+| `JWT_SECRET`                 | 无                          | HS256 签名密钥，必填，必须与 site 相同                               |
+| `JWT_ISSUER`                 | `site`                      | JWT issuer，必须与 site 相同                                         |
 | `OPENAI_API_KEY`             | 无                          | OpenAI 或兼容网关密钥                                                |
 | `OPENAI_BASE_URL`            | `https://api.openai.com/v1` | OpenAI 兼容基础地址                                                  |
 | `OPENAI_MODEL`               | 无                          | 网关提供的模型 ID                                                    |
@@ -231,7 +228,7 @@ go test -count=1 ./...
 go build ./cmd/server
 ```
 
-PostgreSQL 用户与对话存储测试默认跳过。应对准独立测试库，不要使用生产数据库：
+PostgreSQL 对话存储测试默认跳过。应对准独立测试库，不要使用生产数据库：
 
 ```powershell
 $env:TEST_DATABASE_URL = "postgres://chat_agent:chat_agent@127.0.0.1:5432/chat_agent?sslmode=disable"
@@ -268,13 +265,13 @@ go test -tags=integration -run "^TestDeepSeekConnectivity$" -count=1 ./internal/
 - [x] 实现 Weather Tool
 - [x] 实现 Agent 与最大执行步数
 - [x] 实现 LLM → Tool → Observation → LLM 的 Agent Loop
-- [x] 实现固定用户 JWT 登录与 API 路由保护
+- [x] 实现 site JWT 校验与 API 路由保护
 - [x] 实现 `POST /api/chat`
 - [x] 添加请求校验、错误映射和 Agent 集成测试
 
 ### 后续阶段
 
-- [x] 使用数据库与 `UserStore` 替代临时环境变量单用户凭据
+- [x] 用户身份由 site JWT 提供；对话接口要求 `CanChat`
 - [x] Web Chat UI
 - [x] SSE 流式响应
 - [x] SSE 支持客户端主动断开并取消本次 Chat，停止后续 LLM 与工具调用

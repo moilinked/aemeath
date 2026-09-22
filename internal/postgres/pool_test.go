@@ -50,8 +50,8 @@ func TestDecodeMessages(t *testing.T) {
 
 func TestSplitSQLStatements(t *testing.T) {
 	statements := splitSQLStatements(`
-		CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY);
 		CREATE TABLE IF NOT EXISTS conversations (id TEXT PRIMARY KEY);
+		CREATE TABLE IF NOT EXISTS messages (id TEXT PRIMARY KEY);
 	`)
 	if len(statements) != 2 {
 		t.Fatalf("splitSQLStatements() = %d, want 2", len(statements))

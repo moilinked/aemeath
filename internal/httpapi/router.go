@@ -52,10 +52,9 @@ func NewRouter(dependencies Dependencies) (http.Handler, error) {
 	idempotency := newIdempotencyStore(defaultChatIdempotencyTTL)
 
 	router.Get("/healthz", health)
-	router.Post("/api/auth/login", login(dependencies.Auth))
 	router.Route("/api", func(api chi.Router) {
 		api.Use(requireBearer(dependencies.Auth))
-		api.Get("/auth/me", me)
+		api.Use(requireCanChat)
 		api.Get("/conversations", listConversations(dependencies.Conversations))
 		api.Get("/conversations/{conversationID}", getConversation(dependencies.Conversations))
 		api.Patch("/conversations/{conversationID}", patchConversation(dependencies.Conversations))

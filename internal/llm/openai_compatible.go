@@ -30,6 +30,7 @@ type OpenAICompatibleConfig struct {
 }
 
 // OpenAICompatibleClient 调用 OpenAI 格式的 Chat Completions API，支持非流式与流式。
+// Authorization 只使用配置的模型 API Key，不得转发用户 Access Token。
 type OpenAICompatibleClient struct {
 	endpoint    string
 	apiKey      string
