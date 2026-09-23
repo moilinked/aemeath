@@ -9,7 +9,7 @@ import (
 )
 
 // Verify 校验 JWT 签名、算法、issuer 与时间声明。
-// 用户表在 site 库，chat-agent 只验 site 签发的 token，不再查本地用户。
+// 用户表在 site 库，chat-agent 只用公钥本地验签；权限变更在 token 过期后生效。
 func (service *Service) Verify(
 	ctx context.Context,
 	tokenValue string,
@@ -26,9 +26,9 @@ func (service *Service) Verify(
 		tokenValue,
 		claims,
 		func(token *jwt.Token) (any, error) {
-			return service.signingKey, nil
+			return service.publicKey, nil
 		},
-		jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Alg()}),
+		jwt.WithValidMethods([]string{jwt.SigningMethodEdDSA.Alg()}),
 		jwt.WithIssuer(service.issuer),
 		jwt.WithExpirationRequired(),
 		jwt.WithIssuedAt(),

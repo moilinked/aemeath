@@ -134,8 +134,8 @@ func newAgent(
 
 func newAuthService(cfg config.AuthConfig) (*auth.Service, error) {
 	service, err := auth.New(auth.Config{
-		SigningKey: []byte(cfg.SigningKey),
-		Issuer:     cfg.Issuer,
+		PublicKey: cfg.PublicKey,
+		Issuer:    cfg.Issuer,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create auth service: %w", err)

@@ -10,7 +10,7 @@ Token 由 site 签发，本文不提供任何可登录凭据。
 | --- | --- |
 | JSON | `Content-Type: application/json`；未知字段会 `400`；响应为 UTF-8，末尾带换行 |
 | 时间 | RFC3339，UTC |
-| 鉴权 | 除健康检查外，均需 `Authorization: Bearer <access_token>`。Token 由 site 签发（`iss=site`），与 site 共用 `JWT_SECRET` |
+| 鉴权 | 除健康检查外，均需 `Authorization: Bearer <access_token>`。Token 由 site 用 Ed25519 私钥签发（`alg=EdDSA`，`iss=site`），chat-agent 用 `JWT_PUBLIC_KEY` 本地验签，不回调 site；权限变更在 token 过期后生效 |
 | 错误体 | `{"error":"<message>"}`；`401` 另带 `WWW-Authenticate: Bearer realm="api"` |
 | 对话权限 | 对话与 Chat 接口还要求 JWT `capabilities.chat`；没有则 `403` `chat is not allowed` |
 | 对话 ID | 由服务端生成（32 位 hex）。客户端只回传已收到的 ID，不可自造新 ID 来开对话 |

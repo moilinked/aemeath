@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"crypto/ed25519"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -13,6 +14,8 @@ import (
 	"github.com/ecol/chat-agent/internal/llm"
 	"github.com/ecol/chat-agent/internal/tools"
 )
+
+var httpTestSigningKey = ed25519.NewKeyFromSeed([]byte("0123456789abcdef0123456789abcdef"))
 
 func TestRouter(t *testing.T) {
 	tests := []struct {
@@ -131,8 +134,8 @@ func newHTTPTestAuth(t *testing.T) *auth.Service {
 	t.Helper()
 
 	service, err := auth.New(auth.Config{
-		SigningKey: []byte("0123456789abcdef0123456789abcdef"),
-		Issuer:     "test-issuer",
+		PublicKey: httpTestSigningKey.Public().(ed25519.PublicKey),
+		Issuer:    "test-issuer",
 	})
 	if err != nil {
 		t.Fatalf("auth.New() error = %v", err)

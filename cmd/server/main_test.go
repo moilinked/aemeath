@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/ed25519"
 	"testing"
 	"time"
 
@@ -117,6 +118,7 @@ func TestNewAgent(t *testing.T) {
 }
 
 func TestNewAuthService(t *testing.T) {
+	publicKey := ed25519.NewKeyFromSeed([]byte("0123456789abcdef0123456789abcdef")).Public().(ed25519.PublicKey)
 	tests := []struct {
 		name    string
 		config  config.AuthConfig
@@ -125,19 +127,20 @@ func TestNewAuthService(t *testing.T) {
 		{
 			name: "valid configuration",
 			config: config.AuthConfig{
-				SigningKey: "0123456789abcdef0123456789abcdef",
-				Issuer:     "test-issuer",
+				PublicKey: publicKey,
+				Issuer:    "test-issuer",
 			},
 		},
 		{
-			name: "short signing key",
+			name: "invalid public key",
 			config: config.AuthConfig{
-				SigningKey: "short",
-				Issuer:     "test-issuer",
+				PublicKey: []byte("short"),
+				Issuer:    "test-issuer",
 			},
+			wantErr: true,
 		},
 		{
-			name: "missing signing key",
+			name: "missing public key",
 			config: config.AuthConfig{
 				Issuer: "test-issuer",
 			},
@@ -146,7 +149,7 @@ func TestNewAuthService(t *testing.T) {
 		{
 			name: "missing issuer",
 			config: config.AuthConfig{
-				SigningKey: "0123456789abcdef0123456789abcdef",
+				PublicKey: publicKey,
 			},
 			wantErr: true,
 		},

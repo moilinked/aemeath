@@ -1,16 +1,18 @@
 package config
 
 import (
+	"crypto/ed25519"
+	"encoding/base64"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 )
 
-const (
-	testJWTSecret   = "0123456789abcdef0123456789abcdef"
-	testDatabaseURL = "postgres://chat_agent:chat_agent@127.0.0.1:5432/chat_agent?sslmode=disable"
-)
+const testDatabaseURL = "postgres://chat_agent:chat_agent@127.0.0.1:5432/chat_agent?sslmode=disable"
+
+var testJWTPublicKey = ed25519.NewKeyFromSeed([]byte("0123456789abcdef0123456789abcdef")).Public().(ed25519.PublicKey)
 
 func TestLoad(t *testing.T) {
 	tests := []struct {
@@ -29,9 +31,9 @@ func TestLoad(t *testing.T) {
 		openAIAPIKey         string
 		openAIBaseURL        string
 		openAIModel          string
-		jwtSecret            string
+		jwtPublicKey         string
 		jwtIssuer            string
-		missingJWTSecret     bool
+		missingJWTPublicKey  bool
 		databaseURL          string
 		missingDatabase      bool
 		wantAddress          string
@@ -56,8 +58,8 @@ func TestLoad(t *testing.T) {
 			},
 			wantAgent: defaultWantAgent(defaultAgentMaxSteps),
 			wantAuth: AuthConfig{
-				SigningKey: testJWTSecret,
-				Issuer:     defaultJWTIssuer,
+				PublicKey: testJWTPublicKey,
+				Issuer:    defaultJWTIssuer,
 			},
 		},
 		{
@@ -76,7 +78,7 @@ func TestLoad(t *testing.T) {
 			openAIAPIKey:         "secret-key",
 			openAIBaseURL:        "https://gateway.example.com/v1",
 			openAIModel:          "chat-gpt-luna",
-			jwtSecret:            "abcdef0123456789abcdef0123456789",
+			jwtPublicKey:         base64.StdEncoding.EncodeToString(testJWTPublicKey),
 			jwtIssuer:            "test-issuer",
 			wantAddress:          "127.0.0.1:9090",
 			wantTimeout:          20 * time.Second,
@@ -96,8 +98,8 @@ func TestLoad(t *testing.T) {
 				MaxOutputTokens: 1024,
 			},
 			wantAuth: AuthConfig{
-				SigningKey: "abcdef0123456789abcdef0123456789",
-				Issuer:     "test-issuer",
+				PublicKey: testJWTPublicKey,
+				Issuer:    "test-issuer",
 			},
 		},
 		{
@@ -116,8 +118,8 @@ func TestLoad(t *testing.T) {
 			},
 			wantAgent: defaultWantAgent(defaultAgentMaxSteps),
 			wantAuth: AuthConfig{
-				SigningKey: testJWTSecret,
-				Issuer:     defaultJWTIssuer,
+				PublicKey: testJWTPublicKey,
+				Issuer:    defaultJWTIssuer,
 			},
 		},
 		{
@@ -166,9 +168,9 @@ func TestLoad(t *testing.T) {
 			wantErr:    true,
 		},
 		{
-			name:             "rejects missing JWT secret",
-			missingJWTSecret: true,
-			wantErr:          true,
+			name:                "rejects missing JWT public key",
+			missingJWTPublicKey: true,
+			wantErr:             true,
 		},
 		{
 			name:            "rejects missing DATABASE_URL",
@@ -176,24 +178,9 @@ func TestLoad(t *testing.T) {
 			wantErr:         true,
 		},
 		{
-			name:        "accepts short JWT secret",
-			jwtSecret:   "short",
-			wantAddress: fmt.Sprintf(":%d", defaultServerPort),
-			wantTimeout: defaultReadTimeout,
-			wantLLM: LLMConfig{
-				Provider:             LLMProviderDeepSeek,
-				BaseURL:              defaultDeepSeekBaseURL,
-				Model:                defaultDeepSeekModel,
-				RequestTimeout:       defaultLLMRequestTimeout,
-				RetryMaxAttempts:     defaultLLMRetryAttempts,
-				RetryInitialInterval: defaultLLMRetryInitial,
-				RetryMaxInterval:     defaultLLMRetryMax,
-			},
-			wantAgent: defaultWantAgent(defaultAgentMaxSteps),
-			wantAuth: AuthConfig{
-				SigningKey: "short",
-				Issuer:     defaultJWTIssuer,
-			},
+			name:         "rejects invalid JWT public key",
+			jwtPublicKey: base64.StdEncoding.EncodeToString([]byte("short")),
+			wantErr:      true,
 		},
 		{
 			name:      "rejects blank JWT issuer",
@@ -242,14 +229,14 @@ func TestLoad(t *testing.T) {
 			t.Setenv("DEEPSEEK_API_KEY", "")
 			t.Setenv("DEEPSEEK_BASE_URL", "")
 			t.Setenv("DEEPSEEK_MODEL", "")
-			signingKey := testJWTSecret
-			if tt.jwtSecret != "" {
-				signingKey = tt.jwtSecret
+			publicKey := base64.StdEncoding.EncodeToString(testJWTPublicKey)
+			if tt.jwtPublicKey != "" {
+				publicKey = tt.jwtPublicKey
 			}
-			if tt.missingJWTSecret {
-				signingKey = ""
+			if tt.missingJWTPublicKey {
+				publicKey = ""
 			}
-			t.Setenv("JWT_SECRET", signingKey)
+			t.Setenv("JWT_PUBLIC_KEY", publicKey)
 			t.Setenv("JWT_ISSUER", tt.jwtIssuer)
 			databaseURL := testDatabaseURL
 			if tt.databaseURL != "" {
@@ -265,8 +252,8 @@ func TestLoad(t *testing.T) {
 				if err == nil {
 					t.Fatal("Load() error = nil, want an error")
 				}
-				if signingKey != "" && strings.Contains(err.Error(), signingKey) {
-					t.Fatal("Load() error exposes JWT signing key")
+				if publicKey != "" && strings.Contains(err.Error(), publicKey) {
+					t.Fatal("Load() error exposes JWT public key")
 				}
 				return
 			}
@@ -291,8 +278,8 @@ func TestLoad(t *testing.T) {
 			if cfg.Agent != tt.wantAgent {
 				t.Errorf("Agent = %#v, want %#v", cfg.Agent, tt.wantAgent)
 			}
-			if cfg.Auth.SigningKey != tt.wantAuth.SigningKey {
-				t.Error("Auth signing key does not match expected value")
+			if !slices.Equal(cfg.Auth.PublicKey, tt.wantAuth.PublicKey) {
+				t.Error("Auth public key does not match expected value")
 			}
 			if cfg.Auth.Issuer != tt.wantAuth.Issuer {
 				t.Errorf("Auth issuer = %q, want %q", cfg.Auth.Issuer, tt.wantAuth.Issuer)

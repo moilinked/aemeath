@@ -203,9 +203,7 @@ func signedHTTPTestTokenWithChat(t *testing.T, expiresAt time.Time, canChat bool
 			Chat: canChat,
 		},
 	}
-	value, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(
-		[]byte("0123456789abcdef0123456789abcdef"),
-	)
+	value, err := jwt.NewWithClaims(jwt.SigningMethodEdDSA, claims).SignedString(httpTestSigningKey)
 	if err != nil {
 		t.Fatalf("SignedString() error = %v", err)
 	}

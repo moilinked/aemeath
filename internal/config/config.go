@@ -2,6 +2,8 @@
 package config
 
 import (
+	"crypto/ed25519"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"os"
@@ -63,12 +65,11 @@ type AgentConfig struct {
 	MaxOutputTokens int
 }
 
-// AuthConfig 包含 JWT Access Token 配置。
-// SigningKey 必须与 site 相同；Issuer 默认为 site。
-// SigningKey 只从环境变量读取，禁止写入日志或提交到版本控制。
+// AuthConfig 包含 JWT Access Token 验签配置。
+// PublicKey 必须与 site 的 Ed25519 私钥配对，只从环境变量读取；Issuer 默认为 site。
 type AuthConfig struct {
-	SigningKey string
-	Issuer     string
+	PublicKey ed25519.PublicKey
+	Issuer    string
 }
 
 // Config 包含 HTTP 服务、数据库、LLM、Agent 和认证配置。
@@ -295,9 +296,9 @@ func loadDatabaseURL() (string, error) {
 }
 
 func loadAuthConfig() (AuthConfig, error) {
-	signingKey := os.Getenv("JWT_SECRET")
-	if strings.TrimSpace(signingKey) == "" {
-		return AuthConfig{}, errors.New("JWT_SECRET is required")
+	publicKey, err := decodeEd25519PublicKey(os.Getenv("JWT_PUBLIC_KEY"))
+	if err != nil {
+		return AuthConfig{}, err
 	}
 
 	issuer := strings.TrimSpace(envOrDefault("JWT_ISSUER", defaultJWTIssuer))
@@ -305,7 +306,19 @@ func loadAuthConfig() (AuthConfig, error) {
 		return AuthConfig{}, errors.New("JWT_ISSUER is required")
 	}
 	return AuthConfig{
-		SigningKey: signingKey,
-		Issuer:     issuer,
+		PublicKey: publicKey,
+		Issuer:    issuer,
 	}, nil
+}
+
+func decodeEd25519PublicKey(value string) (ed25519.PublicKey, error) {
+	encoded := strings.TrimSpace(value)
+	if encoded == "" {
+		return nil, errors.New("JWT_PUBLIC_KEY is required")
+	}
+	decoded, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil || len(decoded) != ed25519.PublicKeySize {
+		return nil, errors.New("JWT_PUBLIC_KEY must be base64-encoded Ed25519 public key material")
+	}
+	return ed25519.PublicKey(decoded), nil
 }

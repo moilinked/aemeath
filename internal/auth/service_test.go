@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"crypto/ed25519"
 	"errors"
 	"testing"
 	"time"
@@ -15,7 +16,8 @@ const (
 )
 
 var (
-	testSigningKey = []byte("0123456789abcdef0123456789abcdef")
+	testSigningKey = ed25519.NewKeyFromSeed([]byte("0123456789abcdef0123456789abcdef"))
+	testPublicKey  = testSigningKey.Public().(ed25519.PublicKey)
 	testNow        = time.Date(2026, time.August, 20, 8, 0, 0, 0, time.UTC)
 )
 
@@ -25,16 +27,23 @@ func TestNewRejectsInvalidConfig(t *testing.T) {
 		config Config
 	}{
 		{
-			name: "missing signing key",
+			name: "missing public key",
 			config: Config{
 				Issuer: "test",
 			},
 		},
 		{
+			name: "short public key",
+			config: Config{
+				PublicKey: ed25519.PublicKey("short"),
+				Issuer:    "test",
+			},
+		},
+		{
 			name: "missing issuer",
 			config: Config{
-				SigningKey: testSigningKey,
-				Issuer:     " ",
+				PublicKey: testPublicKey,
+				Issuer:    " ",
 			},
 		},
 	}
@@ -49,10 +58,10 @@ func TestNewRejectsInvalidConfig(t *testing.T) {
 	}
 }
 
-func TestNewAcceptsShortSigningKey(t *testing.T) {
+func TestNewAcceptsValidConfig(t *testing.T) {
 	service, err := New(Config{
-		SigningKey: []byte("short"),
-		Issuer:     "test",
+		PublicKey: testPublicKey,
+		Issuer:    "test",
 	})
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
@@ -120,6 +129,26 @@ func TestVerifyAcceptsTokenWithoutChatCapability(t *testing.T) {
 	}
 }
 
+func TestVerifyFallsBackToSubjectWithoutUsername(t *testing.T) {
+	service := newTestService(t)
+	token := signedClaimsToken(t, testSigningKey, Claims{
+		RegisteredClaims: jwt.RegisteredClaims{
+			Issuer:    "test-issuer",
+			Subject:   testUserID,
+			ExpiresAt: jwt.NewNumericDate(testNow.Add(time.Hour)),
+			IssuedAt:  jwt.NewNumericDate(testNow),
+		},
+		Capabilities: Capabilities{Chat: true},
+	})
+	identity, err := service.Verify(context.Background(), token)
+	if err != nil {
+		t.Fatalf("Verify() error = %v", err)
+	}
+	if identity.Username != testUserID {
+		t.Fatalf("Verify() username = %q, want %q", identity.Username, testUserID)
+	}
+}
+
 func TestVerifyRejectsInvalidTokens(t *testing.T) {
 	validService := newTestService(t)
 	validToken := signedClaimsToken(t, testSigningKey, Claims{
@@ -135,8 +164,8 @@ func TestVerifyRejectsInvalidTokens(t *testing.T) {
 	})
 
 	wrongKeyService, err := New(Config{
-		SigningKey: []byte("abcdef0123456789abcdef0123456789"),
-		Issuer:     "test-issuer",
+		PublicKey: ed25519.NewKeyFromSeed([]byte("abcdef0123456789abcdef0123456789")).Public().(ed25519.PublicKey),
+		Issuer:    "test-issuer",
 	})
 	if err != nil {
 		t.Fatalf("New() wrong key service error = %v", err)
@@ -159,8 +188,18 @@ func TestVerifyRejectsInvalidTokens(t *testing.T) {
 		{
 			name:    "wrong issuer",
 			service: validService,
-			token: signedToken(t, testSigningKey, jwt.SigningMethodHS256, jwt.RegisteredClaims{
+			token: signedToken(t, testSigningKey, jwt.SigningMethodEdDSA, jwt.RegisteredClaims{
 				Issuer:    "wrong-issuer",
+				Subject:   testUserID,
+				ExpiresAt: jwt.NewNumericDate(testNow.Add(time.Hour)),
+				IssuedAt:  jwt.NewNumericDate(testNow),
+			}),
+		},
+		{
+			name:    "HS256 signed with public key",
+			service: validService,
+			token: signedToken(t, []byte(testPublicKey), jwt.SigningMethodHS256, jwt.RegisteredClaims{
+				Issuer:    "test-issuer",
 				Subject:   testUserID,
 				ExpiresAt: jwt.NewNumericDate(testNow.Add(time.Hour)),
 				IssuedAt:  jwt.NewNumericDate(testNow),
@@ -217,8 +256,8 @@ func newTestService(t *testing.T) *Service {
 	t.Helper()
 
 	service, err := New(Config{
-		SigningKey: testSigningKey,
-		Issuer:     "test-issuer",
+		PublicKey: testPublicKey,
+		Issuer:    "test-issuer",
 	})
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
@@ -244,5 +283,5 @@ func signedToken(
 
 func signedClaimsToken(t *testing.T, signingKey any, claims jwt.Claims) string {
 	t.Helper()
-	return signedToken(t, signingKey, jwt.SigningMethodHS256, claims)
+	return signedToken(t, signingKey, jwt.SigningMethodEdDSA, claims)
 }

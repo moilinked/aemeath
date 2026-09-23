@@ -175,7 +175,7 @@ Invoke-RestMethod http://localhost:8080/healthz
 
 完整请求/响应、错误码、幂等和 SSE 解析见 [docs/api.md](docs/api.md)。
 
-公开接口：`GET /healthz`。其余 `/api/*` 需要 site 签发的 `Authorization: Bearer <access_token>`（`iss=site`，与 site 共用 `JWT_SECRET`）。对话与 Chat 接口还要求 `capabilities.chat`。`POST /api/chat` 与 `POST /api/chat/stream` 还必须带 `Idempotency-Key`。前端根据 site `GET /api/auth/me` 的 `capabilities.chat` 隐藏 Chat 入口。
+公开接口：`GET /healthz`。其余 `/api/*` 需要 site 签发的 `Authorization: Bearer <access_token>`（`alg=EdDSA`，`iss=site`）。chat-agent 只持有 site 的 Ed25519 公钥并在本地验签，不回调 site；改角色或删用户后，旧 token 在过期前仍有效。对话与 Chat 接口还要求 `capabilities.chat`。`POST /api/chat` 与 `POST /api/chat/stream` 还必须带 `Idempotency-Key`。前端根据 site `GET /api/auth/me` 的 `capabilities.chat` 隐藏 Chat 入口。
 
 | 方法     | 路径                               | 说明                                          |
 | -------- | ---------------------------------- | --------------------------------------------- |
@@ -210,7 +210,7 @@ Invoke-RestMethod http://localhost:8080/healthz
 | `AGENT_CONTEXT_TOKENS`       | `8192`                      | 单次 LLM 请求的估算 prompt token 上限；超出则丢掉最旧完整轮次        |
 | `AGENT_MAX_OUTPUT_TOKENS`    | `2048`                      | 单次回复的最大输出 token（`max_tokens`）                             |
 | `DATABASE_URL`               | 无                          | 远程 PostgreSQL 连接串，必填；格式见 `docs/deploy-postgres-linux.md` |
-| `JWT_SECRET`                 | 无                          | HS256 签名密钥，必填，必须与 site 相同                               |
+| `JWT_PUBLIC_KEY`             | 无                          | 必填，与 site 私钥配对的 base64 Ed25519 公钥（32 字节）              |
 | `JWT_ISSUER`                 | `site`                      | JWT issuer，必须与 site 相同                                         |
 | `OPENAI_API_KEY`             | 无                          | OpenAI 或兼容网关密钥                                                |
 | `OPENAI_BASE_URL`            | `https://api.openai.com/v1` | OpenAI 兼容基础地址                                                  |

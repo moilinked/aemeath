@@ -2,6 +2,7 @@
 package auth
 
 import (
+	"crypto/ed25519"
 	"errors"
 	"strings"
 	"time"
@@ -12,8 +13,8 @@ var ErrInvalidToken = errors.New("invalid access token")
 
 // Config 定义 JWT 校验参数。
 type Config struct {
-	SigningKey []byte
-	Issuer     string
+	PublicKey ed25519.PublicKey
+	Issuer    string
 }
 
 // Identity 是 JWT 验证后得到的用户公开身份。
@@ -28,17 +29,17 @@ func (identity Identity) CanChat() bool {
 	return identity.Capabilities.CanChat()
 }
 
-// Service 校验 site 签发的 JWT，不签发 token、不保存用户。
+// Service 使用 site 的 Ed25519 公钥本地校验 JWT，不签发 token、不保存用户、不回调 site。
 type Service struct {
-	signingKey []byte
-	issuer     string
-	now        func() time.Time
+	publicKey ed25519.PublicKey
+	issuer    string
+	now       func() time.Time
 }
 
 // New 创建认证服务并校验 JWT 安全参数。
 func New(config Config) (*Service, error) {
-	if strings.TrimSpace(string(config.SigningKey)) == "" {
-		return nil, errors.New("JWT signing key is required")
+	if len(config.PublicKey) != ed25519.PublicKeySize {
+		return nil, errors.New("JWT public key is invalid")
 	}
 	issuer := strings.TrimSpace(config.Issuer)
 	if issuer == "" {
@@ -46,8 +47,8 @@ func New(config Config) (*Service, error) {
 	}
 
 	return &Service{
-		signingKey: append([]byte(nil), config.SigningKey...),
-		issuer:     issuer,
-		now:        time.Now,
+		publicKey: append(ed25519.PublicKey(nil), config.PublicKey...),
+		issuer:    issuer,
+		now:       time.Now,
 	}, nil
 }
